@@ -1,0 +1,16 @@
+# Core dependencies
+python-dotenv==1.0.0
+supabase==2.0.0
+requests==2.31.0
+
+# Twitch API
+twitchAPI==4.2.1
+
+# Utilities
+python-dateutil==2.8.2
+pytz==2023.3
+
+# Development (optional)
+pytest==7.4.0
+black==23.7.0
+flake8==6.0.0
