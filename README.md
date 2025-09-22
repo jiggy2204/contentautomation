@@ -13,7 +13,7 @@ Automated Twitch-to-YouTube content processing system.
 ## Features
 
 - [x] Database schema setup
-- [ ] Twitch API integration
+- [x] Twitch API integration
 - [ ] Stream detection
 - [ ] Video processing
 - [ ] YouTube uploads
