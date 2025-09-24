@@ -5,6 +5,11 @@ requests==2.31.0
 
 # Twitch API
 twitchAPI==4.2.1
+google-api-python-client==2.100.0
+google-auth==2.22.0
+google-auth-oauthlib==2.22.0
+yt-dlp==2023.7.6
+ffmpeg-python==0.2.0
 
 # Utilities
 python-dateutil==2.8.2

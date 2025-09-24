@@ -24,7 +24,12 @@ class Config:
     TWITCH_CLIENT_ID: str = os.getenv("TWITCH_CLIENT_ID", "")
     TWITCH_CLIENT_SECRET: str = os.getenv("TWITCH_CLIENT_SECRET", "")
     TWITCH_USER_LOGIN: str = os.getenv("TWITCH_USER_LOGIN", "")
-    
+
+    # YouTube API Configuration
+    YOUTUBE_CREDENTIALS_FILE = os.getenv('YOUTUBE_CREDENTIALS_FILE', 'client_secret.json')
+    YOUTUBE_TOKEN_FILE = os.getenv('YOUTUBE_TOKEN_FILE', 'youtube_token.pickle')
+    YOUTUBE_DEFAULT_PRIVACY = os.getenv('YOUTUBE_DEFAULT_PRIVACY', 'private')
+        
     # DigitalOcean Spaces Configuration
     DO_SPACES_KEY: str = os.getenv("DO_SPACES_KEY", "")
     DO_SPACES_SECRET: str = os.getenv("DO_SPACES_SECRET", "")

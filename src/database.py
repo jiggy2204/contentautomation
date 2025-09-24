@@ -11,7 +11,7 @@ from src.config import get_config
 
 logger = logging.getLogger(__name__)
 
-class DatabaseClient:
+class SupabaseClient:
     """Supabase database client with helper methods for content automation."""
     
     def __init__(self):
@@ -185,9 +185,9 @@ class DatabaseClient:
 # Global database client instance
 _db_client = None
 
-def get_db_client() -> DatabaseClient:
+def get_db_client() -> SupabaseClient:
     """Get the global database client instance."""
     global _db_client
     if _db_client is None:
-        _db_client = DatabaseClient()
+        _db_client = SupabaseClient()
     return _db_client

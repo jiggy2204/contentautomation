@@ -12,6 +12,8 @@ venv.bak/
 
 # Environment variables
 .env
+client_secret.json
+youtube_token.pickle
 
 # IDE
 .vscode/
