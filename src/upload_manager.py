@@ -1,616 +1,452 @@
 """
-Upload manager that coordinates VOD processing and YouTube uploads.
-Integrates with the existing stream detection and database system.
+Enhanced Upload Manager with Clips Processing and Optimal Scheduling
+Phase 3 Enhancement - Integrated automation system
 """
 
-import os
-import time
+import asyncio
 import logging
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List
-from pathlib import Path
 import threading
-from queue import Queue, Empty
+import time
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
 
-# Import your existing modules
-from config import *
-from src.database import SupabaseClient
-from src.youtube_api import YouTubeAPI, create_video_title, create_video_description, get_gaming_tags
-from src.vod_processor import VODProcessor, process_stream_vod
+from src.config import Config
+from src.database import Database
+from src.youtube_api import YouTubeAPI
+from src.vod_processor import VODProcessor
+from src.clips_processor import ClipsProcessor
+from src.scheduling_optimizer import SchedulingOptimizer
 
 logger = logging.getLogger(__name__)
 
-class UploadManager:
-    """Manages the complete pipeline from stream detection to YouTube upload."""
-    
+class EnhancedUploadManager:
     def __init__(self):
-        """Initialize the upload manager with all required services."""
-        self.db = SupabaseClient()
+        """Initialize the enhanced upload manager with all Phase 3 components"""
+        self.config = Config()
+        self.db = Database()
         self.youtube = YouTubeAPI()
         self.vod_processor = VODProcessor()
-        self.upload_queue = Queue()
-        self.running = False
-        self.worker_thread = None
+        self.clips_processor = ClipsProcessor()
+        self.scheduler = SchedulingOptimizer()
         
-        logger.info("Upload manager initialized")
+        # Processing control
+        self.processing_active = True
+        self.upload_thread = None
+        self.scheduler_thread = None
+        
+        # Enhanced intervals
+        self.upload_scan_interval = self.config.UPLOAD_SCAN_INTERVAL_MINUTES * 60  # 30 minutes
+        self.scheduler_scan_interval = 300  # 5 minutes for scheduled publishing
+        
+        logger.info("Enhanced upload manager initialized with clips processing and scheduling")
     
-    def check_for_completed_streams(self) -> List[Dict[str, Any]]:
-        """
-        Check database for streams that need processing.
+    def start_enhanced_processing(self):
+        """Start all enhanced processing workers"""
+        if self.upload_thread and self.upload_thread.is_alive():
+            logger.info("Enhanced processing already running")
+            return
         
-        Returns:
-            List of stream records ready for processing
-        """
+        self.processing_active = True
+        
+        # Start main upload processing worker
+        self.upload_thread = threading.Thread(
+            target=self._enhanced_upload_worker,
+            name="EnhancedUploadWorker",
+            daemon=True
+        )
+        self.upload_thread.start()
+        
+        # Start scheduler worker for timed publishing
+        self.scheduler_thread = threading.Thread(
+            target=self._scheduler_worker,
+            name="SchedulerWorker", 
+            daemon=True
+        )
+        self.scheduler_thread.start()
+        
+        logger.info("Enhanced processing workers started")
+        logger.info(f"- Upload processing: Every {self.upload_scan_interval // 60} minutes")
+        logger.info(f"- Scheduled publishing: Every {self.scheduler_scan_interval // 60} minutes")
+    
+    def _enhanced_upload_worker(self):
+        """Enhanced worker that processes VODs and clips"""
+        while self.processing_active:
+            try:
+                logger.info("🔄 Running enhanced upload scan...")
+                
+                # Process completed streams
+                completed_streams = self._get_completed_streams()
+                
+                for stream in completed_streams:
+                    stream_id = stream['id']
+                    logger.info(f"Processing completed stream: {stream['title']}")
+                    
+                    # Process VOD first
+                    await self._process_stream_vod(stream_id, stream)
+                    
+                    # Process clips for shorts
+                    await self._process_stream_clips(stream_id, stream)
+                    
+                    # Create optimal schedule for all content
+                    self._schedule_stream_content(stream_id)
+                
+                # Upload any content ready for immediate upload
+                self._upload_ready_content()
+                
+                # Clean up old files
+                self._cleanup_old_files()
+                
+                logger.info("✅ Enhanced upload scan completed")
+                
+            except Exception as e:
+                logger.error(f"Error in enhanced upload worker: {e}")
+            
+            # Wait for next scan
+            time.sleep(self.upload_scan_interval)
+    
+    def _scheduler_worker(self):
+        """Worker that handles scheduled publishing"""
+        while self.processing_active:
+            try:
+                logger.debug("🕐 Checking scheduled content...")
+                
+                # Get content ready to publish
+                ready_uploads = self.scheduler.get_ready_to_publish()
+                
+                for upload in ready_uploads:
+                    try:
+                        self._publish_scheduled_content(upload)
+                    except Exception as e:
+                        logger.error(f"Error publishing scheduled content {upload['id']}: {e}")
+                
+                if ready_uploads:
+                    logger.info(f"✅ Published {len(ready_uploads)} scheduled items")
+                
+            except Exception as e:
+                logger.error(f"Error in scheduler worker: {e}")
+            
+            # Wait for next check
+            time.sleep(self.scheduler_scan_interval)
+    
+    async def _process_stream_vod(self, stream_id: str, stream_data: Dict):
+        """Process VOD for a completed stream"""
         try:
-            # Query for ended streams that haven't been processed yet
-            response = self.db.supabase.table('streams').select(
-                'id, title, started_at, ended_at, user_login, twitch_stream_id'
-            ).is_('ended_at', 'null').is_('processed_at', 'null').execute()
+            # Check if VOD already processed
+            vod_job = self._get_processing_job(stream_id, 'vod_download')
+            if vod_job and vod_job.get('status') == 'completed':
+                logger.info(f"VOD already processed for stream {stream_id}")
+                return
+            
+            logger.info(f"Processing VOD for stream: {stream_data['title']}")
+            
+            # Process with existing VOD processor
+            success = await self.vod_processor.process_stream_vod(stream_id)
+            
+            if success:
+                logger.info(f"✅ VOD processed successfully for stream {stream_id}")
+                
+                # Update processing job
+                if vod_job:
+                    self.db.update_processing_job(vod_job['id'], 'completed')
+            else:
+                logger.error(f"❌ VOD processing failed for stream {stream_id}")
+                if vod_job:
+                    self.db.update_processing_job(vod_job['id'], 'failed')
+                    
+        except Exception as e:
+            logger.error(f"Error processing VOD for stream {stream_id}: {e}")
+    
+    async def _process_stream_clips(self, stream_id: str, stream_data: Dict):
+        """Process clips for a completed stream"""
+        try:
+            # Check if clips already processed
+            clips_job = self._get_processing_job(stream_id, 'clips_processing')
+            if clips_job and clips_job.get('status') == 'completed':
+                logger.info(f"Clips already processed for stream {stream_id}")
+                return
+            
+            # Create clips processing job if doesn't exist
+            if not clips_job:
+                job_data = {
+                    'stream_id': stream_id,
+                    'job_type': 'clips_processing',
+                    'status': 'pending'
+                }
+                job_id = self.db.create_processing_job(job_data)
+                clips_job = {'id': job_id}
+            
+            logger.info(f"Processing clips for stream: {stream_data['title']}")
+            
+            # Update job status
+            self.db.update_processing_job(clips_job['id'], 'processing')
+            
+            # Process clips
+            processed_clips = await self.clips_processor.process_stream_clips(stream_id)
+            
+            if processed_clips:
+                logger.info(f"✅ Processed {len(processed_clips)} clips for stream {stream_id}")
+                
+                # Update processing job with results
+                self.db.update_processing_job(clips_job['id'], 'completed', metadata={
+                    'clips_processed': len(processed_clips),
+                    'clip_ids': [clip['clip_data']['id'] for clip in processed_clips]
+                })
+            else:
+                logger.info(f"No clips found for stream {stream_id}")
+                self.db.update_processing_job(clips_job['id'], 'completed', metadata={'clips_processed': 0})
+                
+        except Exception as e:
+            logger.error(f"Error processing clips for stream {stream_id}: {e}")
+            if clips_job:
+                self.db.update_processing_job(clips_job['id'], 'failed', error_message=str(e))
+    
+    def _schedule_stream_content(self, stream_id: str):
+        """Create optimal schedule for all content from a stream"""
+        try:
+            logger.info(f"Creating schedule for stream content: {stream_id}")
+            
+            # Get optimal schedule from scheduler
+            schedule = self.scheduler.schedule_content_uploads(stream_id)
+            
+            # Apply schedule to VOD uploads
+            vod_uploads = self._get_stream_uploads(stream_id, 'vod')
+            vod_schedule = schedule.get('vod', [])
+            
+            for i, upload in enumerate(vod_uploads):
+                if i < len(vod_schedule) and upload['status'] == 'ready_for_upload':
+                    slot = vod_schedule[i]
+                    self.scheduler.update_upload_schedule(upload['id'], slot.datetime)
+            
+            # Apply schedule to shorts uploads  
+            shorts_uploads = self._get_stream_uploads(stream_id, 'short')
+            shorts_schedule = schedule.get('shorts', [])
+            
+            for i, upload in enumerate(shorts_uploads):
+                if i < len(shorts_schedule) and upload['status'] == 'ready_for_upload':
+                    slot = shorts_schedule[i]
+                    self.scheduler.update_upload_schedule(upload['id'], slot.datetime)
+            
+            logger.info(f"✅ Scheduled {len(vod_uploads)} VODs and {len(shorts_uploads)} shorts for stream {stream_id}")
+            
+        except Exception as e:
+            logger.error(f"Error scheduling content for stream {stream_id}: {e}")
+    
+    def _publish_scheduled_content(self, upload_data: Dict):
+        """Publish scheduled content and make it public"""
+        try:
+            upload_id = upload_data['id']
+            content_type = upload_data.get('content_type', 'unknown')
+            
+            logger.info(f"Publishing scheduled {content_type}: {upload_data.get('youtube_title', 'Untitled')}")
+            
+            # If content isn't uploaded yet, upload it first
+            if upload_data['status'] == 'scheduled' and not upload_data.get('youtube_video_id'):
+                success = self._upload_content_to_youtube(upload_data)
+                if not success:
+                    return
+                
+                # Refresh upload data
+                upload_data = self.db.get_upload(upload_id)
+            
+            # Make the video public
+            if upload_data.get('youtube_video_id'):
+                success = self.youtube.update_video_privacy(
+                    upload_data['youtube_video_id'], 
+                    'public'
+                )
+                
+                if success:
+                    # Update upload record
+                    self.db.supabase.table('uploads').update({
+                        'youtube_privacy_status': 'public',
+                        'published_at': datetime.now().isoformat(),
+                        'status': 'published'
+                    }).eq('id', upload_id).execute()
+                    
+                    logger.info(f"✅ Published {content_type}: {upload_data['youtube_title']}")
+                else:
+                    logger.error(f"Failed to publish {content_type}: {upload_id}")
+            
+        except Exception as e:
+            logger.error(f"Error publishing scheduled content {upload_data['id']}: {e}")
+    
+    def _upload_content_to_youtube(self, upload_data: Dict) -> bool:
+        """Upload content to YouTube"""
+        try:
+            file_path = upload_data['file_path']
+            if not file_path or not os.path.exists(file_path):
+                logger.error(f"File not found for upload {upload_data['id']}: {file_path}")
+                return False
+            
+            # Prepare metadata
+            metadata = {
+                'title': upload_data.get('youtube_title', 'Untitled'),
+                'description': upload_data.get('youtube_description', ''),
+                'privacy_status': upload_data.get('youtube_privacy_status', 'private'),
+                'category_id': '20',  # Gaming category
+                'tags': upload_data.get('metadata', {}).get('tags', [])
+            }
+            
+            # Upload to YouTube
+            video_id = self.youtube.upload_video(file_path, metadata)
+            
+            if video_id:
+                # Update upload record
+                self.db.supabase.table('uploads').update({
+                    'youtube_video_id': video_id,
+                    'status': 'uploaded'
+                }).eq('id', upload_data['id']).execute()
+                
+                logger.info(f"✅ Uploaded to YouTube: {video_id}")
+                return True
+            else:
+                logger.error(f"Failed to upload {upload_data['id']}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error uploading content {upload_data['id']}: {e}")
+            return False
+    
+    def _upload_ready_content(self):
+        """Upload any content marked as ready for immediate upload"""
+        try:
+            # Get uploads ready for immediate upload (no schedule)
+            ready_uploads = self.db.supabase.table('uploads').select('*').eq('status', 'ready_for_upload').is_('scheduled_publish_at', 'null').execute()
+            
+            for upload in ready_uploads.data:
+                try:
+                    self._upload_content_to_youtube(upload)
+                except Exception as e:
+                    logger.error(f"Error uploading ready content {upload['id']}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error uploading ready content: {e}")
+    
+    def _get_completed_streams(self) -> List[Dict]:
+        """Get streams that are completed but not fully processed"""
+        try:
+            # Get streams that ended but haven't been fully processed
+            streams = self.db.supabase.table('streams').select('*').not_.is_('ended_at', 'null').execute()
             
             completed_streams = []
-            
-            for stream in response.data:
-                # Check if stream has actually ended (no longer live)
-                if self._is_stream_ended(stream):
+            for stream in streams.data:
+                # Check if this stream needs processing
+                if self._stream_needs_processing(stream['id']):
                     completed_streams.append(stream)
-            
-            if completed_streams:
-                logger.info(f"Found {len(completed_streams)} completed streams to process")
             
             return completed_streams
             
         except Exception as e:
-            logger.error(f"Failed to check for completed streams: {e}")
+            logger.error(f"Error getting completed streams: {e}")
             return []
     
-    def _is_stream_ended(self, stream: Dict[str, Any]) -> bool:
-        """
-        Check if a stream has actually ended.
-        Could integrate with Twitch API or use time-based heuristic.
-        """
-        # Simple heuristic: if stream started more than 6 hours ago, consider it ended
-        # In production, you'd want to use Twitch API to check actual status
-        started_at = datetime.fromisoformat(stream['started_at'].replace('Z', '+00:00'))
-        time_since_start = datetime.now().replace(tzinfo=started_at.tzinfo) - started_at
-        
-        return time_since_start > timedelta(hours=6)
-    
-    def queue_stream_for_processing(self, stream: Dict[str, Any]) -> bool:
-        """
-        Add a stream to the processing queue.
-        
-        Args:
-            stream: Stream record from database
-            
-        Returns:
-            True if queued successfully
-        """
+    def _stream_needs_processing(self, stream_id: str) -> bool:
+        """Check if a stream needs processing"""
         try:
-            # Create processing job record
-            job_data = {
-                'stream_id': stream['id'],
-                'job_type': 'youtube_upload',
-                'status': 'queued',
-                'created_at': datetime.utcnow().isoformat(),
-                'metadata': {
-                    'stream_title': stream['title'],
-                    'twitch_stream_id': stream['twitch_stream_id']
-                }
+            # Check for existing processing jobs
+            vod_job = self._get_processing_job(stream_id, 'vod_download')
+            clips_job = self._get_processing_job(stream_id, 'clips_processing')
+            
+            # Stream needs processing if:
+            # 1. No VOD job exists or VOD job is not completed
+            # 2. No clips job exists or clips job is not completed
+            needs_vod = not vod_job or vod_job.get('status') != 'completed'
+            needs_clips = not clips_job or clips_job.get('status') != 'completed'
+            
+            return needs_vod or needs_clips
+            
+        except Exception as e:
+            logger.error(f"Error checking if stream needs processing: {e}")
+            return True  # Err on side of caution
+    
+    def _get_processing_job(self, stream_id: str, job_type: str) -> Optional[Dict]:
+        """Get processing job for a stream"""
+        try:
+            jobs = self.db.supabase.table('processing_jobs').select('*').eq('stream_id', stream_id).eq('job_type', job_type).execute()
+            return jobs.data[0] if jobs.data else None
+        except Exception as e:
+            logger.error(f"Error getting processing job: {e}")
+            return None
+    
+    def _get_stream_uploads(self, stream_id: str, content_type: str) -> List[Dict]:
+        """Get uploads for a specific stream and content type"""
+        try:
+            uploads = self.db.supabase.table('uploads').select('*').eq('metadata->>stream_id', stream_id).eq('content_type', content_type).execute()
+            return uploads.data
+        except Exception in e:
+            logger.error(f"Error getting stream uploads: {e}")
+            return []
+    
+    def _cleanup_old_files(self):
+        """Clean up old files"""
+        try:
+            # Clean up VOD files
+            self.vod_processor.cleanup_old_files(self.config.CLEANUP_KEEP_DAYS)
+            
+            # Clean up clip files  
+            self.clips_processor.cleanup_clip_files(self.config.CLEANUP_KEEP_DAYS)
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+    
+    def stop_processing(self):
+        """Stop all processing workers"""
+        logger.info("Stopping enhanced processing workers...")
+        self.processing_active = False
+        
+        if self.upload_thread:
+            self.upload_thread.join(timeout=10)
+        if self.scheduler_thread:
+            self.scheduler_thread.join(timeout=10)
+            
+        logger.info("Enhanced processing workers stopped")
+    
+    def get_enhanced_status(self) -> Dict:
+        """Get comprehensive status of the enhanced system"""
+        try:
+            # Get schedule summary
+            schedule_summary = self.scheduler.get_schedule_summary(7)
+            
+            # Get processing status
+            pending_jobs = self.db.supabase.table('processing_jobs').select('*').neq('status', 'completed').execute()
+            
+            # Get upload queue status
+            queued_uploads = self.db.supabase.table('uploads').select('*').in_('status', ['ready_for_upload', 'scheduled', 'uploading']).execute()
+            
+            return {
+                'processing_active': self.processing_active,
+                'worker_threads': {
+                    'upload_worker': self.upload_thread.is_alive() if self.upload_thread else False,
+                    'scheduler_worker': self.scheduler_thread.is_alive() if self.scheduler_thread else False
+                },
+                'pending_jobs': len(pending_jobs.data),
+                'queued_uploads': len(queued_uploads.data),
+                'schedule_summary': schedule_summary,
+                'next_scheduled': min([item['scheduled_time'] for day_items in schedule_summary.values() for item in day_items], default=None)
             }
             
-            response = self.db.supabase.table('processing_jobs').insert(job_data).execute()
-            job_id = response.data[0]['id']
-            
-            # Add to processing queue
-            self.upload_queue.put({
-                'job_id': job_id,
-                'stream': stream
-            })
-            
-            logger.info(f"Stream {stream['id']} queued for processing (job {job_id})")
-            return True
-            
         except Exception as e:
-            logger.error(f"Failed to queue stream {stream['id']}: {e}")
-            return False
-    
-    def process_upload_job(self, job: Dict[str, Any]) -> bool:
-        """
-        Process a single upload job.
-        
-        Args:
-            job: Job data from queue
-            
-        Returns:
-            True if successful
-        """
-        job_id = job['job_id']
-        stream = job['stream']
-        
-        logger.info(f"Processing upload job {job_id} for stream {stream['id']}")
-        
-        try:
-            # Update job status
-            self._update_job_status(job_id, 'processing')
-            
-            # Step 1: Get Twitch VOD URL
-            vod_url = self._get_vod_url(stream['twitch_stream_id'])
-            if not vod_url:
-                logger.error(f"Could not find VOD URL for stream {stream['id']}")
-                self._update_job_status(job_id, 'failed', 'VOD URL not found')
-                return False
-            
-            # Step 2: Process VOD
-            logger.info("Starting VOD processing...")
-            processed_data = process_stream_vod(
-                stream['id'], 
-                vod_url, 
-                self.vod_processor
-            )
-            
-            if not processed_data or not processed_data['ready_for_upload']:
-                logger.error("VOD processing failed")
-                self._update_job_status(job_id, 'failed', 'VOD processing failed')
-                return False
-            
-            # Step 3: Create YouTube metadata
-            title = create_video_title(
-                stream['title'],
-                datetime.fromisoformat(stream['started_at']).strftime('%Y-%m-%d')
-            )
-            
-            description = create_video_description(
-                stream['title'],
-                datetime.fromisoformat(stream['started_at']).strftime('%Y-%m-%d %H:%M UTC'),
-                self.vod_processor._format_duration(processed_data['vod_info']['duration']),
-                vod_url
-            )
-            
-            tags = get_gaming_tags()
-            
-            # Step 4: Upload to YouTube
-            logger.info("Starting YouTube upload...")
-            video_id = self.youtube.upload_video(
-                video_path=processed_data['processed_file'],
-                title=title,
-                description=description,
-                tags=tags,
-                privacy_status='private',  # Start private
-                thumbnail_path=processed_data['thumbnail_file']
-            )
-            
-            if not video_id:
-                logger.error("YouTube upload failed")
-                self._update_job_status(job_id, 'failed', 'YouTube upload failed')
-                return False
-            
-            # Step 5: Create upload record
-            upload_data = {
-                'stream_id': stream['id'],
-                'platform': 'youtube',
-                'video_id': video_id,
-                'title': title,
-                'description': description,
-                'status': 'uploaded',
-                'privacy_status': 'private',
-                'uploaded_at': datetime.utcnow().isoformat(),
-                'file_path': processed_data['processed_file'],
-                'thumbnail_path': processed_data['thumbnail_file'],
-                'metadata': {
-                    'original_file': processed_data['original_file'],
-                    'vod_info': processed_data['vod_info'],
-                    'processing_stats': self.vod_processor.get_processing_stats()
-                }
-            }
-            
-            self.db.supabase.table('uploads').insert(upload_data).execute()
-            
-            # Step 6: Mark stream as processed
-            self.db.supabase.table('streams').update({
-                'processed_at': datetime.utcnow().isoformat()
-            }).eq('id', stream['id']).execute()
-            
-            # Step 7: Complete job
-            self._update_job_status(job_id, 'completed', f'Video uploaded: {video_id}')
-            
-            logger.info(f"Upload job {job_id} completed successfully! YouTube video: {video_id}")
-            
-            # Step 8: Cleanup (optional - keep files for now)
-            # self._cleanup_processed_files(processed_data)
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Upload job {job_id} failed: {e}")
-            self._update_job_status(job_id, 'failed', str(e))
-            return False
-    
-    def _get_vod_url(self, twitch_stream_id: str) -> Optional[str]:
-        """
-        Get VOD URL from Twitch stream ID.
-        This is a placeholder - you'd need to implement actual Twitch API call.
-        """
-        # TODO: Implement actual Twitch API call to get VOD URL
-        # For now, construct expected URL format
-        if twitch_stream_id:
-            return f"https://www.twitch.tv/videos/{twitch_stream_id}"
-        return None
-    
-    def _update_job_status(self, job_id: int, status: str, message: str = "") -> None:
-        """Update job status in database."""
-        try:
-            update_data = {
-                'status': status,
-                'updated_at': datetime.utcnow().isoformat()
-            }
-            
-            if message:
-                update_data['error_message'] = message
-            
-            if status == 'completed':
-                update_data['completed_at'] = datetime.utcnow().isoformat()
-            
-            self.db.supabase.table('processing_jobs').update(update_data).eq('id', job_id).execute()
-            
-        except Exception as e:
-            logger.error(f"Failed to update job {job_id} status: {e}")
-    
-    def start_processing(self) -> None:
-        """Start the background processing worker."""
-        if self.running:
-            logger.warning("Processing already running")
-            return
-        
-        self.running = True
-        self.worker_thread = threading.Thread(target=self._process_worker, daemon=True)
-        self.worker_thread.start()
-        
-        logger.info("Upload processing started")
-    
-    def stop_processing(self) -> None:
-        """Stop the background processing worker."""
-        self.running = False
-        
-        if self.worker_thread:
-            self.worker_thread.join(timeout=30)
-        
-        logger.info("Upload processing stopped")
-    
-    def _process_worker(self) -> None:
-        """Background worker that processes upload jobs."""
-        logger.info("Upload processing worker started")
-        
-        while self.running:
-            try:
-                # Get job from queue (wait up to 5 seconds)
-                job = self.upload_queue.get(timeout=5)
-                
-                # Process the job
-                success = self.process_upload_job(job)
-                
-                if success:
-                    logger.info("Job processed successfully")
-                else:
-                    logger.error("Job processing failed")
-                
-                # Mark job as done
-                self.upload_queue.task_done()
-                
-                # Small delay between jobs
-                time.sleep(10)
-                
-            except Empty:
-                # No jobs in queue, continue loop
-                continue
-            except Exception as e:
-                logger.error(f"Worker error: {e}")
-                time.sleep(30)  # Wait before retrying
-        
-        logger.info("Upload processing worker stopped")
-    
-    def run_scan_cycle(self) -> None:
-        """Run one scan cycle for completed streams."""
-        logger.info("Scanning for completed streams...")
-        
-        completed_streams = self.check_for_completed_streams()
-        
-        for stream in completed_streams:
-            self.queue_stream_for_processing(stream)
-        
-        logger.info(f"Scan cycle complete: {len(completed_streams)} streams queued")
-    
-    def get_queue_status(self) -> Dict[str, Any]:
-        """Get current queue and processing status."""
-        return {
-            'queue_size': self.upload_queue.qsize(),
-            'processing_active': self.running,
-            'worker_alive': self.worker_thread.is_alive() if self.worker_thread else False
-        }
-    
-    def make_videos_public(self, hours_after_upload: int = 2) -> None:
-        """
-        Make uploaded videos public after specified time.
-        
-        Args:
-            hours_after_upload: Hours to wait before making public
-        """
-        try:
-            cutoff_time = datetime.utcnow() - timedelta(hours=hours_after_upload)
-            
-            # Get private videos uploaded before cutoff
-            response = self.db.supabase.table('uploads').select(
-                'id, video_id, uploaded_at'
-            ).eq('platform', 'youtube').eq('privacy_status', 'private').lt(
-                'uploaded_at', cutoff_time.isoformat()
-            ).execute()
-            
-            for upload in response.data:
-                if self.youtube.make_video_public(upload['video_id']):
-                    # Update database
-                    self.db.supabase.table('uploads').update({
-                        'privacy_status': 'public',
-                        'published_at': datetime.utcnow().isoformat()
-                    }).eq('id', upload['id']).execute()
-                    
-                    logger.info(f"Made video public: {upload['video_id']}")
-                else:
-                    logger.error(f"Failed to make video public: {upload['video_id']}")
-        
-        except Exception as e:
-            logger.error(f"Failed to make videos public: {e}")
+            logger.error(f"Error getting enhanced status: {e}")
+            return {'error': str(e)}
 
-
-# Enhanced main monitoring function that includes upload processing
-def run_enhanced_stream_monitor():
-    """
-    Enhanced version of stream monitor that includes upload processing.
-    Combines stream detection with VOD processing and uploads.
-    """
-    # Import your existing stream detector
-    from stream_detector import StreamDetector
+# Test functions
+async def test_enhanced_system():
+    """Test the complete enhanced system"""
+    manager = EnhancedUploadManager()
     
-    # Initialize services
-    stream_detector = StreamDetector()
-    upload_manager = UploadManager()
+    logger.info("Testing enhanced upload manager...")
     
-    # Start upload processing
-    upload_manager.start_processing()
+    # Test clips processor
+    await manager.clips_processor.test_clips_processor() 
     
-    logger.info("Enhanced stream monitor started")
-    logger.info("- Stream detection: Every 2 minutes")
-    logger.info("- Upload processing: Every 30 minutes")
-    logger.info("- Auto-publishing: Every 30 minutes")
+    # Test scheduler
+    manager.scheduler.test_scheduling_optimizer()
     
-    # Tracking variables
-    last_upload_scan = datetime.now()
-    last_publish_scan = datetime.now()
-    upload_scan_interval = timedelta(minutes=30)
-    publish_scan_interval = timedelta(minutes=30)
+    # Test system status
+    status = manager.get_enhanced_status()
+    logger.info(f"System status: {status}")
     
-    try:
-        while True:
-            current_time = datetime.now()
-            
-            # Regular stream detection (every 2 minutes)
-            try:
-                stream_detector.check_stream_status()
-                time.sleep(120)  # 2 minutes
-            except Exception as e:
-                logger.error(f"Stream detection error: {e}")
-                time.sleep(60)  # Wait 1 minute before retry
-            
-            # Upload processing scan (every 30 minutes)
-            if current_time - last_upload_scan >= upload_scan_interval:
-                try:
-                    upload_manager.run_scan_cycle()
-                    last_upload_scan = current_time
-                except Exception as e:
-                    logger.error(f"Upload scan error: {e}")
-            
-            # Publishing scan (every 30 minutes)
-            if current_time - last_publish_scan >= publish_scan_interval:
-                try:
-                    upload_manager.make_videos_public(hours_after_upload=2)
-                    last_publish_scan = current_time
-                except Exception as e:
-                    logger.error(f"Publishing scan error: {e}")
-            
-            # Log queue status periodically
-            if current_time.minute % 10 == 0:  # Every 10 minutes
-                status = upload_manager.get_queue_status()
-                logger.info(f"Queue status: {status}")
-    
-    except KeyboardInterrupt:
-        logger.info("Shutting down enhanced stream monitor...")
-        upload_manager.stop_processing()
-        logger.info("Shutdown complete")
-
-
-# Utility functions for testing and manual operations
-def manual_process_stream(stream_id: int) -> bool:
-    """
-    Manually trigger processing for a specific stream.
-    
-    Args:
-        stream_id: ID of the stream to process
-        
-    Returns:
-        True if processing started successfully
-    """
-    try:
-        db = SupabaseClient()
-        upload_manager = UploadManager()
-        
-        # Get stream record
-        response = db.supabase.table('streams').select('*').eq('id', stream_id).execute()
-        
-        if not response.data:
-            logger.error(f"Stream {stream_id} not found")
-            return False
-        
-        stream = response.data[0]
-        
-        # Queue for processing
-        success = upload_manager.queue_stream_for_processing(stream)
-        
-        if success:
-            # Start processing if not already running
-            upload_manager.start_processing()
-            logger.info(f"Stream {stream_id} queued for manual processing")
-        
-        return success
-        
-    except Exception as e:
-        logger.error(f"Manual processing failed: {e}")
-        return False
-
-
-def check_upload_status() -> Dict[str, Any]:
-    """
-    Check current upload and processing status.
-    
-    Returns:
-        Status dictionary with current information
-    """
-    try:
-        db = SupabaseClient()
-        upload_manager = UploadManager()
-        
-        # Get recent jobs
-        jobs_response = db.supabase.table('processing_jobs').select(
-            'id, status, created_at, completed_at, error_message'
-        ).order('created_at', desc=True).limit(10).execute()
-        
-        # Get recent uploads
-        uploads_response = db.supabase.table('uploads').select(
-            'id, video_id, title, status, privacy_status, uploaded_at'
-        ).order('uploaded_at', desc=True).limit(10).execute()
-        
-        # Get queue status
-        queue_status = upload_manager.get_queue_status()
-        
-        return {
-            'queue': queue_status,
-            'recent_jobs': jobs_response.data,
-            'recent_uploads': uploads_response.data,
-            'timestamp': datetime.utcnow().isoformat()
-        }
-        
-    except Exception as e:
-        logger.error(f"Status check failed: {e}")
-        return {'error': str(e)}
-
-
-def cleanup_old_files(days: int = 7) -> Dict[str, int]:
-    """
-    Clean up old downloaded and processed files.
-    
-    Args:
-        days: Number of days to keep files
-        
-    Returns:
-        Cleanup statistics
-    """
-    try:
-        cutoff_date = datetime.now() - timedelta(days=days)
-        
-        # Get directories from config
-        download_dir = Path(VOD_DOWNLOAD_DIR)
-        temp_dir = Path(VOD_TEMP_DIR)
-        
-        cleaned_files = 0
-        freed_bytes = 0
-        
-        # Clean download directory
-        if download_dir.exists():
-            for file_path in download_dir.rglob('*'):
-                if file_path.is_file():
-                    file_time = datetime.fromtimestamp(file_path.stat().st_mtime)
-                    if file_time < cutoff_date:
-                        freed_bytes += file_path.stat().st_size
-                        file_path.unlink()
-                        cleaned_files += 1
-        
-        # Clean temp directory
-        if temp_dir.exists():
-            for file_path in temp_dir.rglob('*'):
-                if file_path.is_file():
-                    file_time = datetime.fromtimestamp(file_path.stat().st_mtime)
-                    if file_time < cutoff_date:
-                        freed_bytes += file_path.stat().st_size
-                        file_path.unlink()
-                        cleaned_files += 1
-        
-        logger.info(f"Cleanup complete: {cleaned_files} files, {freed_bytes / 1024 / 1024:.1f} MB freed")
-        
-        return {
-            'files_cleaned': cleaned_files,
-            'bytes_freed': freed_bytes,
-            'mb_freed': freed_bytes / 1024 / 1024
-        }
-        
-    except Exception as e:
-        logger.error(f"Cleanup failed: {e}")
-        return {'error': str(e)}
-
-
-# Testing functions
-def test_upload_manager():
-    """Test basic upload manager functionality."""
-    try:
-        upload_manager = UploadManager()
-        
-        # Test database connectivity
-        completed_streams = upload_manager.check_for_completed_streams()
-        print(f"Found {len(completed_streams)} completed streams")
-        
-        # Test queue status
-        status = upload_manager.get_queue_status()
-        print(f"Queue status: {status}")
-        
-        print("Upload manager test completed successfully!")
-        return True
-        
-    except Exception as e:
-        print(f"Upload manager test failed: {e}")
-        return False
-
-
-def test_full_pipeline():
-    """Test the complete pipeline integration."""
-    try:
-        print("Testing complete pipeline...")
-        
-        # Test individual components
-        from youtube_api import test_youtube_api
-        from vod_processor import test_vod_processor
-        
-        print("1. Testing YouTube API...")
-        if not test_youtube_api():
-            return False
-        
-        print("2. Testing VOD processor...")
-        if not test_vod_processor():
-            return False
-        
-        print("3. Testing upload manager...")
-        if not test_upload_manager():
-            return False
-        
-        print("4. Testing status functions...")
-        status = check_upload_status()
-        print(f"Status check: {status}")
-        
-        print("\nFull pipeline test completed successfully!")
-        print("Your system is ready to process streams automatically!")
-        
-        return True
-        
-    except Exception as e:
-        print(f"Full pipeline test failed: {e}")
-        return False
-
+    logger.info("✅ Enhanced system test completed")
 
 if __name__ == "__main__":
-    # Run enhanced monitoring when called directly
-    run_enhanced_stream_monitor()
+    asyncio.run(test_enhanced_system())
