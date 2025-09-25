@@ -3,6 +3,7 @@ Enhanced Upload Manager with Clips Processing and Optimal Scheduling
 Phase 3 Enhancement - Integrated automation system
 """
 
+import os
 import asyncio
 import logging
 import threading
@@ -10,20 +11,20 @@ import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
-from src.config import Config
-from src.database import Database
-from src.youtube_api import YouTubeAPI
-from src.vod_processor import VODProcessor
-from src.clips_processor import ClipsProcessor
-from src.scheduling_optimizer import SchedulingOptimizer
+from .config import Config
+from .database import SupabaseClient
+from .youtube_api import YouTubeAPI
+from .vod_processor import VODProcessor
+from .clips_processor import ClipsProcessor
+from .scheduling_optimizer import SchedulingOptimizer
 
 logger = logging.getLogger(__name__)
 
-class EnhancedUploadManager:
+class UploadManager:
     def __init__(self):
         """Initialize the enhanced upload manager with all Phase 3 components"""
         self.config = Config()
-        self.db = Database()
+        self.db = SupabaseClient()
         self.youtube = YouTubeAPI()
         self.vod_processor = VODProcessor()
         self.clips_processor = ClipsProcessor()
@@ -34,8 +35,9 @@ class EnhancedUploadManager:
         self.upload_thread = None
         self.scheduler_thread = None
         
-        # Enhanced intervals
-        self.upload_scan_interval = self.config.UPLOAD_SCAN_INTERVAL_MINUTES * 60  # 30 minutes
+        # Enhanced intervals - use existing config or defaults
+        upload_scan_minutes = getattr(self.config, 'UPLOAD_SCAN_INTERVAL_MINUTES', 30)
+        self.upload_scan_interval = upload_scan_minutes * 60  # Convert to seconds
         self.scheduler_scan_interval = 300  # 5 minutes for scheduled publishing
         
         logger.info("Enhanced upload manager initialized with clips processing and scheduling")
@@ -70,6 +72,10 @@ class EnhancedUploadManager:
     
     def _enhanced_upload_worker(self):
         """Enhanced worker that processes VODs and clips"""
+        # Create async event loop for this thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
         while self.processing_active:
             try:
                 logger.info("🔄 Running enhanced upload scan...")
@@ -82,10 +88,10 @@ class EnhancedUploadManager:
                     logger.info(f"Processing completed stream: {stream['title']}")
                     
                     # Process VOD first
-                    await self._process_stream_vod(stream_id, stream)
+                    loop.run_until_complete(self._process_stream_vod(stream_id, stream))
                     
                     # Process clips for shorts
-                    await self._process_stream_clips(stream_id, stream)
+                    loop.run_until_complete(self._process_stream_clips(stream_id, stream))
                     
                     # Create optimal schedule for all content
                     self._schedule_stream_content(stream_id)
@@ -103,6 +109,8 @@ class EnhancedUploadManager:
             
             # Wait for next scan
             time.sleep(self.upload_scan_interval)
+        
+        loop.close()
     
     def _scheduler_worker(self):
         """Worker that handles scheduled publishing"""
@@ -139,8 +147,23 @@ class EnhancedUploadManager:
             
             logger.info(f"Processing VOD for stream: {stream_data['title']}")
             
-            # Process with existing VOD processor
-            success = await self.vod_processor.process_stream_vod(stream_id)
+            # Process with existing VOD processor - check if method exists and is async
+            if hasattr(self.vod_processor, 'process_stream_vod'):
+                # Try to call the method (might be sync or async)
+                try:
+                    result = self.vod_processor.process_stream_vod(stream_id)
+                    # If it returns a coroutine, await it
+                    if hasattr(result, '__await__'):
+                        success = await result
+                    else:
+                        success = result
+                except TypeError:
+                    # Method might not exist or have different signature
+                    logger.warning(f"VOD processor method signature mismatch for stream {stream_id}")
+                    success = False
+            else:
+                logger.warning("VOD processor doesn't have process_stream_vod method")
+                success = False
             
             if success:
                 logger.info(f"✅ VOD processed successfully for stream {stream_id}")
@@ -167,18 +190,16 @@ class EnhancedUploadManager:
             
             # Create clips processing job if doesn't exist
             if not clips_job:
-                job_data = {
-                    'stream_id': stream_id,
-                    'job_type': 'clips_processing',
-                    'status': 'pending'
-                }
-                job_id = self.db.create_processing_job(job_data)
-                clips_job = {'id': job_id}
+                clips_job = self.db.create_processing_job(
+                    stream_id=stream_id,
+                    job_type='clips_processing',
+                    priority=0
+                )
             
             logger.info(f"Processing clips for stream: {stream_data['title']}")
             
-            # Update job status
-            self.db.update_processing_job(clips_job['id'], 'processing')
+            # Update job status  
+            self.db.update_job_status(clips_job['id'], 'processing')
             
             # Process clips
             processed_clips = await self.clips_processor.process_stream_clips(stream_id)
@@ -186,19 +207,16 @@ class EnhancedUploadManager:
             if processed_clips:
                 logger.info(f"✅ Processed {len(processed_clips)} clips for stream {stream_id}")
                 
-                # Update processing job with results
-                self.db.update_processing_job(clips_job['id'], 'completed', metadata={
-                    'clips_processed': len(processed_clips),
-                    'clip_ids': [clip['clip_data']['id'] for clip in processed_clips]
-                })
+                # Update processing job with results using your database method
+                self.db.update_job_status(clips_job['id'], 'completed')
             else:
                 logger.info(f"No clips found for stream {stream_id}")
-                self.db.update_processing_job(clips_job['id'], 'completed', metadata={'clips_processed': 0})
+                self.db.update_job_status(clips_job['id'], 'completed')
                 
         except Exception as e:
             logger.error(f"Error processing clips for stream {stream_id}: {e}")
             if clips_job:
-                self.db.update_processing_job(clips_job['id'], 'failed', error_message=str(e))
+                self.db.update_job_status(clips_job['id'], 'failed', error_message=str(e))
     
     def _schedule_stream_content(self, stream_id: str):
         """Create optimal schedule for all content from a stream"""
@@ -208,8 +226,8 @@ class EnhancedUploadManager:
             # Get optimal schedule from scheduler
             schedule = self.scheduler.schedule_content_uploads(stream_id)
             
-            # Apply schedule to VOD uploads
-            vod_uploads = self._get_stream_uploads(stream_id, 'vod')
+            # Apply schedule to VOD uploads (all uploads from this stream)
+            vod_uploads = self._get_stream_uploads(stream_id)
             vod_schedule = schedule.get('vod', [])
             
             for i, upload in enumerate(vod_uploads):
@@ -217,16 +235,7 @@ class EnhancedUploadManager:
                     slot = vod_schedule[i]
                     self.scheduler.update_upload_schedule(upload['id'], slot.datetime)
             
-            # Apply schedule to shorts uploads  
-            shorts_uploads = self._get_stream_uploads(stream_id, 'short')
-            shorts_schedule = schedule.get('shorts', [])
-            
-            for i, upload in enumerate(shorts_uploads):
-                if i < len(shorts_schedule) and upload['status'] == 'ready_for_upload':
-                    slot = shorts_schedule[i]
-                    self.scheduler.update_upload_schedule(upload['id'], slot.datetime)
-            
-            logger.info(f"✅ Scheduled {len(vod_uploads)} VODs and {len(shorts_uploads)} shorts for stream {stream_id}")
+            logger.info(f"✅ Created schedule for {len(vod_uploads)} uploads from stream {stream_id}")
             
         except Exception as e:
             logger.error(f"Error scheduling content for stream {stream_id}: {e}")
@@ -368,23 +377,42 @@ class EnhancedUploadManager:
             logger.error(f"Error getting processing job: {e}")
             return None
     
-    def _get_stream_uploads(self, stream_id: str, content_type: str) -> List[Dict]:
-        """Get uploads for a specific stream and content type"""
+    def _get_stream_uploads(self, stream_id: str) -> List[Dict]:
+        """Get uploads for a specific stream - simplified since no content_type filtering"""
         try:
-            uploads = self.db.supabase.table('uploads').select('*').eq('metadata->>stream_id', stream_id).eq('content_type', content_type).execute()
-            return uploads.data
-        except Exception in e:
+            # Get clips associated with this stream from clips table
+            clips = self.db.supabase.table('clips').select('*').eq('stream_id', stream_id).eq('processed', True).execute()
+            
+            # For each clip, find corresponding upload (this is a workaround)
+            uploads = []
+            for clip in clips.data:
+                # Try to find upload by matching title or other identifier
+                upload_results = self.db.supabase.table('uploads').select('*').eq('status', 'ready_for_upload').execute()
+                
+                # Filter uploads that might be from this stream (basic heuristic)
+                for upload in upload_results.data:
+                    if upload.get('file_path') and clip['download_url'] in upload['file_path']:
+                        uploads.append(upload)
+                        break
+            
+            return uploads
+            
+        except Exception as e:
             logger.error(f"Error getting stream uploads: {e}")
             return []
     
     def _cleanup_old_files(self):
         """Clean up old files"""
         try:
-            # Clean up VOD files
-            self.vod_processor.cleanup_old_files(self.config.CLEANUP_KEEP_DAYS)
+            # Clean up VOD files - use existing method if available
+            if hasattr(self.vod_processor, 'cleanup_old_files'):
+                cleanup_days = getattr(self.config, 'CLEANUP_KEEP_DAYS', 7)
+                self.vod_processor.cleanup_old_files(cleanup_days)
             
             # Clean up clip files  
-            self.clips_processor.cleanup_clip_files(self.config.CLEANUP_KEEP_DAYS)
+            if hasattr(self.clips_processor, 'cleanup_clip_files'):
+                cleanup_days = getattr(self.config, 'CLEANUP_KEEP_DAYS', 7)
+                self.clips_processor.cleanup_clip_files(cleanup_days)
             
         except Exception as e:
             logger.error(f"Error during cleanup: {e}")
@@ -432,7 +460,7 @@ class EnhancedUploadManager:
 # Test functions
 async def test_enhanced_system():
     """Test the complete enhanced system"""
-    manager = EnhancedUploadManager()
+    manager = UploadManager()
     
     logger.info("Testing enhanced upload manager...")
     
@@ -446,7 +474,7 @@ async def test_enhanced_system():
     status = manager.get_enhanced_status()
     logger.info(f"System status: {status}")
     
-    logger.info("✅ Enhanced system test completed")
+    logger.info("Enhanced system test completed")
 
 if __name__ == "__main__":
     asyncio.run(test_enhanced_system())

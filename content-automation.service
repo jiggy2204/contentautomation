@@ -1,0 +1,33 @@
+[Unit]
+Description=Content Automation System - Twitch to YouTube Pipeline
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/contentautomation
+Environment=PATH=/usr/bin:/usr/local/bin
+Environment=PYTHONPATH=/var/www/contentautomation
+ExecStart=/usr/bin/python3 /var/www/contentautomation/main.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=content-automation
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=2G
+CPUQuota=80%
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/www/contentautomation/downloads
+ReadWritePaths=/var/www/contentautomation/temp
+ReadWritePaths=/var/www/contentautomation/logs
+
+[Install]
+WantedBy=multi-user.target

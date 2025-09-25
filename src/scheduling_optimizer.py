@@ -11,7 +11,7 @@ import pytz
 from dateutil import parser
 
 from .config import Config
-from .database import Database
+from .database import SupabaseClient
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class SchedulingOptimizer:
     def __init__(self):
         """Initialize the scheduling optimizer"""
         self.config = Config()
-        self.db = Database()
+        self.db = SupabaseClient()
         
         # Default timezone for Sir_Kris (assuming EST/EDT)
         self.timezone = pytz.timezone('US/Eastern')
@@ -210,12 +210,13 @@ class SchedulingOptimizer:
             Dictionary with 'vod' and 'shorts' schedules
         """
         try:
-            # Get stream data
-            stream_data = self.db.get_stream(stream_id)
-            if not stream_data:
+            # Get stream data from database
+            stream_result = self.db.supabase.table('streams').select('*').eq('id', stream_id).execute()
+            if not stream_result.data:
                 logger.error(f"Stream not found: {stream_id}")
                 return {'vod': [], 'shorts': []}
             
+            stream_data = stream_result.data[0]
             stream_ended = stream_data['ended_at']
             if isinstance(stream_ended, str):
                 stream_ended = parser.parse(stream_ended)
@@ -264,19 +265,23 @@ class SchedulingOptimizer:
     def update_upload_schedule(self, upload_id: str, scheduled_time: datetime):
         """
         Update an upload record with its scheduled time
+        Note: Your uploads table doesn't have scheduled_publish_at column yet
+        For now, we'll add it to a separate config or handle manually
         
         Args:
             upload_id: Upload record ID
             scheduled_time: When to publish the upload
         """
         try:
-            # Update the upload record with schedule info
-            self.db.supabase.table('uploads').update({
-                'scheduled_publish_at': scheduled_time.isoformat(),
-                'status': 'scheduled'
-            }).eq('id', upload_id).execute()
+            # For now, just log the schedule - you can add the column later
+            logger.info(f"Would schedule upload {upload_id} for {scheduled_time}")
             
-            logger.info(f"Scheduled upload {upload_id} for {scheduled_time}")
+            # TODO: Add scheduled_publish_at column to uploads table
+            # Then uncomment this:
+            # self.db.supabase.table('uploads').update({
+            #     'scheduled_publish_at': scheduled_time.isoformat(),
+            #     'status': 'scheduled'
+            # }).eq('id', upload_id).execute()
             
         except Exception as e:
             logger.error(f"Error updating upload schedule: {e}")
@@ -284,15 +289,15 @@ class SchedulingOptimizer:
     def get_ready_to_publish(self) -> List[Dict]:
         """
         Get uploads that are ready to be published based on their schedule
+        Simplified for current database schema
         
         Returns:
             List of upload records ready for publishing
         """
         try:
-            now = datetime.now(self.timezone)
-            
-            # Find uploads scheduled for now or earlier
-            uploads = self.db.supabase.table('uploads').select('*').lte('scheduled_publish_at', now.isoformat()).eq('status', 'scheduled').execute()
+            # For now, return uploads that are ready for upload
+            # Later you can add scheduled_publish_at filtering
+            uploads = self.db.supabase.table('uploads').select('*').eq('status', 'ready_for_upload').execute()
             
             return uploads.data
             

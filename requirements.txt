@@ -1,21 +1,43 @@
-# Core dependencies
+# Enhanced Content Automation System - Phase 3 Dependencies
+# Core dependencies from Phase 1 & 2 (WORKING VERSIONS - DO NOT CHANGE)
 python-dotenv==1.0.0
 supabase==2.0.0
 requests==2.31.0
 
-# Twitch API
+# Twitch API (WORKING VERSIONS - DO NOT CHANGE)
 twitchAPI==4.2.1
 google-api-python-client==2.100.0
 google-auth==2.22.0
-google-auth-oauthlib==2.22.0
+google-auth-oauthlib==1.2.2  # Fixed: was 2.22.0 but that version doesn't exist
 yt-dlp==2023.7.6
 ffmpeg-python==0.2.0
 
-# Utilities
+# Utilities (WORKING VERSIONS - DO NOT CHANGE)
 python-dateutil==2.8.2
 pytz==2023.3
 
-# Development (optional)
+# Development (optional - WORKING VERSIONS)
 pytest==7.4.0
 black==23.7.0
 flake8==6.0.0
+
+# NEW Phase 3 Enhanced Dependencies
+# Advanced video processing
+Pillow>=10.0.0              # Image processing for thumbnails
+opencv-python>=4.8.0        # Advanced video analysis (optional)
+
+# Enhanced logging and monitoring
+colorlog>=6.7.0             # Colored logging output
+psutil>=5.9.0               # System monitoring
+
+# Data processing and analysis
+pandas>=2.0.0               # Data analysis for optimization
+numpy>=1.24.0               # Numerical computing
+
+# Enhanced scheduling
+APScheduler>=3.10.0         # Advanced scheduling capabilities
+
+# Optional: Enhanced monitoring (uncomment if needed)
+# prometheus-client>=0.17.0   # Metrics collection
+flask>=2.3.0                # Web dashboard
+flask-socketio>=5.3.0       # Real-time dashboard updates

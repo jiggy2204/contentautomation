@@ -14,12 +14,12 @@ from pathlib import Path
 
 import ffmpeg
 import yt_dlp
-from twitchAPI import Twitch
+from twitchAPI.twitch import Twitch
 from twitchAPI.helper import first
 
-from .config import Config
-from .database import Database
-from .youtube_api import YouTubeAPI
+from src.config import Config
+from src.database import SupabaseClient
+from src.youtube_api import YouTubeAPI
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,13 +29,16 @@ class ClipsProcessor:
     def __init__(self):
         """Initialize the clips processor with required services"""
         self.config = Config()
-        self.db = Database()
+        self.db = SupabaseClient()
         self.youtube = YouTubeAPI()
         
-        # Clips processing settings
-        self.clips_dir = Path(self.config.VOD_DOWNLOAD_DIR) / "clips"
-        self.clips_temp_dir = Path(self.config.VOD_TEMP_DIR) / "clips"
-        self.processed_clips_dir = Path(self.config.VOD_DOWNLOAD_DIR) / "shorts"
+        # Clips processing settings - use existing config or sensible defaults
+        downloads_dir = getattr(self.config, 'VOD_DOWNLOAD_DIR', 'downloads')
+        temp_dir = getattr(self.config, 'VOD_TEMP_DIR', 'temp')
+        
+        self.clips_dir = Path(downloads_dir) / "clips"
+        self.clips_temp_dir = Path(temp_dir) / "clips"
+        self.processed_clips_dir = Path(downloads_dir) / "shorts"
         
         # Create directories
         self.clips_dir.mkdir(parents=True, exist_ok=True)
