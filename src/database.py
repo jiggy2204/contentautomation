@@ -110,6 +110,10 @@ class SupabaseClient:
         except Exception as e:
             logger.error(f"Error creating processing job: {e}")
             raise
+        
+    def update_processing_job(self, job_id: str, status: str, metadata: Optional[Dict] = None, error_message: Optional[str] = None):
+        """Update processing job - wrapper for update_job_status"""
+        return self.update_job_status(job_id, status, error_message)
     
     def update_job_status(self, job_id: str, status: str, 
                          error_message: Optional[str] = None) -> Dict[str, Any]:
