@@ -14,10 +14,10 @@ Automated Twitch-to-YouTube content processing system.
 
 - [x] Database schema setup
 - [x] Twitch API integration
-- [ ] Stream detection
-- [ ] Video processing
-- [ ] YouTube uploads
-- [ ] Optimal scheduling
+- [x] Stream detection
+- [x] Video processing
+- [x] YouTube uploads
+- [x] Optimal scheduling
 
 ## Development
 
