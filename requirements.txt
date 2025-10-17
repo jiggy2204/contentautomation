@@ -1,0 +1,26 @@
+# Python Installs
+requests>=2.32.5 # HTTP library for Python
+python-dotenv>=1.1.1 # Read key-value pairs from a .env file and set them as environment variables
+
+# Twitch API
+twitchAPI>=4.5.0 # A Python wrapper for the Twitch API
+
+# YouTube API
+google-api-python-client>=2.184.0 # Google API Client Library for Python
+google-auth-oauthlib>=1.2.2 # Google Authentication Library
+google-auth-httplib2>=0.2.0
+
+# Video downloading
+streamlink>=7.6.0 # Streamlink is a command-line utility that extracts streams from various services and pipes them into a video player of choice.
+yt-dlp>=2025.10.14 # A feature-rich command-line audio/video downloader
+
+# Database
+supabase>=2.22.0 # Supabase client for Python
+
+# Cloud Storage (Digital Ocean Spaces)
+boto3>=1.40.54 # AWS SDK for Python (works with DO Spaces)
+
+# Utility
+pyyaml>=6.0.3 # YAML parser and emitter for Python
+schedule>=1.2.2 # Job scheduling for Humans
+python-dateutil>=2.9.0 # Extensions to the standard Python datetime module
