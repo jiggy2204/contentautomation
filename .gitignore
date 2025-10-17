@@ -32,6 +32,7 @@ Thumbs.db
 
 # API credentials
 credentials.json
-token.pickle
+*token.pickle
+youtube_token.pickle
 client_secret*.json
 igdb_token.json
