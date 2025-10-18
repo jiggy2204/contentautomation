@@ -5,14 +5,16 @@ Daily VOD collection system - runs once per day between 3-7 AM
 to collect VODs from previous day's streams.
 """
 
+import traceback
 import os
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict, Any, List
 from twitchAPI.twitch import Twitch
 from twitchAPI.helper import first
 from dotenv import load_dotenv
 
+from twitchAPI.type import VideoType
 from supabase_client import SupabaseClient
 
 load_dotenv()
@@ -76,7 +78,8 @@ class TwitchHandler:
             await self.authenticate()
         
         try:
-            cutoff_time = datetime.now() - timedelta(hours=hours_back)
+            from datetime import timezone
+            cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
             vods = []
             
             logger.info(f'🔍 Fetching VODs from last {hours_back} hours...')
@@ -84,7 +87,7 @@ class TwitchHandler:
             # Get recent VODs (Twitch returns newest first)
             vod_generator = self.twitch.get_videos(
                 user_id=self.user_id, 
-                video_type='archive',
+                video_type=VideoType.ARCHIVE,
                 first=20  # Get up to 20 recent VODs
             )
             
@@ -115,6 +118,7 @@ class TwitchHandler:
             
         except Exception as e:
             logger.error(f'❌ Error fetching VODs: {e}')
+            traceback.print_exc()
             return []
     
     async def get_vod_details(self, vod_id: str) -> Optional[Dict[str, Any]]:
@@ -154,6 +158,7 @@ class TwitchHandler:
             
         except Exception as e:
             logger.error(f'❌ Error getting VOD details: {e}')
+            traceback.print_exc()
             return None
     
     def parse_duration(self, duration) -> int:
