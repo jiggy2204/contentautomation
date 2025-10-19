@@ -117,13 +117,14 @@ class GameMetadataHandler:
             logger.error(f'❌ Twitch API error: {e}')
             return None
     
-    def fetch_from_igdb(self, game_name: str, igdb_id: str = None) -> Optional[Dict[str, Any]]:
+    def fetch_from_igdb(self, game_name: str, igdb_id: str = None, require_exact_match: bool = True) -> Optional[Dict[str, Any]]:
         """
         Fetch game metadata from IGDB
         
         Args:
-            game_name: Name of the game
+            game_name: Name of the game (from Twitch - this is canonical)
             igdb_id: Optional IGDB ID from Twitch for direct lookup
+            require_exact_match: If True, only return if exact match found (prevents wrong game data)
         
         Returns:
             Dictionary with game metadata or None
@@ -136,55 +137,57 @@ class GameMetadataHandler:
             logger.info(f'🔍 Searching IGDB for: {game_name}')
             
             # Search for game
-            results = self.igdb_client.search_games(game_name, limit=5)
+            results = self.igdb_client.search_games(game_name, limit=10)
             
             if not results:
                 logger.warning(f'⚠️  No results from IGDB for: {game_name}')
                 return None
             
-            # Find best match - prefer exact match or base game name
+            # Find EXACT match only
             game = None
+            search_name = game_name.lower().strip()
+            
             for result in results:
-                result_name = result.get('name', '').lower()
-                search_name = game_name.lower()
+                result_name = result.get('name', '').lower().strip()
                 
-                # Exact match
+                # EXACT match only
                 if result_name == search_name:
                     game = result
+                    logger.info(f'✅ Found EXACT match in IGDB: {result.get("name")}')
                     break
+            
+            # If require_exact_match and no exact match found, return None
+            if require_exact_match and not game:
+                logger.warning(f'⚠️  No EXACT match in IGDB for: {game_name}')
+                logger.info(f'   Skipping IGDB, will try RAWG instead')
+                return None
+            
+            # If we found an exact match, extract metadata
+            if game:
+                # Extract metadata - USE TWITCH NAME, not IGDB name
+                metadata = {
+                    'game_name': game_name,  # Use Twitch's canonical name!
+                    'source': 'igdb',
+                    'description': game.get('summary', ''),
+                    'igdb_id': str(game.get('id')),
+                    'tags': []
+                }
                 
-                # Base game match (no colon/subtitle)
-                if ':' not in result_name and search_name in result_name:
-                    game = result
-                    break
+                # Extract genre tags
+                if 'genres' in game and game['genres']:
+                    for genre in game['genres']:
+                        if isinstance(genre, dict) and 'name' in genre:
+                            metadata['tags'].append(genre['name'])
+                
+                # Limit to top 3 tags
+                metadata['tags'] = metadata['tags'][:3]
+                
+                logger.info(f'✅ Using IGDB data for: {metadata["game_name"]}')
+                logger.info(f'   Tags: {", ".join(metadata["tags"])}')
+                
+                return metadata
             
-            # If no good match, use first result
-            if not game:
-                game = results[0]
-                logger.warning(f'⚠️  Using first IGDB result: {game.get("name")}')
-            
-            # Extract metadata
-            metadata = {
-                'game_name': game.get('name', game_name),
-                'source': 'igdb',
-                'description': game.get('summary', ''),
-                'igdb_id': str(game.get('id')),
-                'tags': []
-            }
-            
-            # Extract genre tags
-            if 'genres' in game and game['genres']:
-                for genre in game['genres']:
-                    if isinstance(genre, dict) and 'name' in genre:
-                        metadata['tags'].append(genre['name'])
-            
-            # Limit to top 3 tags
-            metadata['tags'] = metadata['tags'][:3]
-            
-            logger.info(f'✅ Found game in IGDB: {metadata["game_name"]}')
-            logger.info(f'   Tags: {", ".join(metadata["tags"])}')
-            
-            return metadata
+            return None
             
         except Exception as e:
             logger.error(f'❌ IGDB error: {e}')
@@ -195,7 +198,7 @@ class GameMetadataHandler:
         Fetch game metadata from RAWG API
         
         Args:
-            game_name: Name of the game
+            game_name: Name of the game (from Twitch - this is canonical)
         
         Returns:
             Dictionary with game metadata or None
@@ -212,7 +215,7 @@ class GameMetadataHandler:
             params = {
                 'key': self.rawg_api_key,
                 'search': game_name,
-                'page_size': 5
+                'page_size': 10
             }
             
             response = requests.get(url, params=params, timeout=10)
@@ -224,22 +227,27 @@ class GameMetadataHandler:
                 logger.warning(f'⚠️  No results from RAWG for: {game_name}')
                 return None
             
-            # Find best match
+            # Find EXACT match only
             game = None
+            search_name = game_name.lower().strip()
+            
             for result in data['results']:
-                result_name = result.get('name', '').lower()
-                search_name = game_name.lower()
+                result_name = result.get('name', '').lower().strip()
                 
+                # EXACT match
                 if result_name == search_name:
                     game = result
+                    logger.info(f'✅ Found EXACT match in RAWG: {result.get("name")}')
                     break
             
+            # If no exact match, return None (don't guess)
             if not game:
-                game = data['results'][0]
+                logger.warning(f'⚠️  No EXACT match in RAWG for: {game_name}')
+                return None
             
-            # Extract metadata
+            # Extract metadata - USE TWITCH NAME
             metadata = {
-                'game_name': game.get('name', game_name),
+                'game_name': game_name,  # Use Twitch's canonical name!
                 'source': 'rawg',
                 'description': game.get('description_raw', ''),
                 'rawg_id': str(game.get('id')),
@@ -255,7 +263,7 @@ class GameMetadataHandler:
                 for tag in game['tags'][:3 - len(metadata['tags'])]:
                     metadata['tags'].append(tag['name'])
             
-            logger.info(f'✅ Found game in RAWG: {metadata["game_name"]}')
+            logger.info(f'✅ Using RAWG data for: {metadata["game_name"]}')
             logger.info(f'   Tags: {", ".join(metadata["tags"])}')
             
             return metadata
