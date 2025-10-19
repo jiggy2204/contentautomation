@@ -14,6 +14,10 @@ from datetime import datetime
 from dotenv import load_dotenv
 import requests
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from twitch_handler import TwitchHandler
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from supabase_client import SupabaseClient
@@ -28,7 +32,7 @@ logger = logging.getLogger(__name__)
 class GameMetadataHandler:
     """Handles fetching and caching game metadata from multiple sources"""
     
-    def __init__(self, db_client: Optional[SupabaseClient] = None):
+    def __init__(self, db_client: Optional[SupabaseClient] = None, twitch_handler: Optional[TwitchHandler] = None):
         """
         Initialize Game Metadata Handler
         
@@ -36,6 +40,7 @@ class GameMetadataHandler:
             db_client: Optional SupabaseClient instance
         """
         self.db = db_client or SupabaseClient()
+        self.twitch_handler = twitch_handler  
         
         # Initialize API clients
         self.igdb_client = IGDBClient()
