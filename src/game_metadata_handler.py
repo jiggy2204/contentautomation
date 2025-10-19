@@ -1,8 +1,8 @@
 # src/game_metadata_handler.py
 """
 Game Metadata Handler
-Fetches game information from IGDB → Steam → RAWG (in that order)
-Handles failures with email notifications to Sir_Kris
+Fetches game information from Twitch → IGDB → RAWG (in that order)
+Prioritizes Twitch for accurate game names and basic info
 """
 
 import sys
@@ -38,9 +38,10 @@ class GameMetadataHandler:
         
         Args:
             db_client: Optional SupabaseClient instance
+            twitch_handler: Optional TwitchHandler instance for Twitch API access
         """
         self.db = db_client or SupabaseClient()
-        self.twitch_handler = twitch_handler  
+        self.twitch_handler = twitch_handler
         
         # Initialize API clients
         self.igdb_client = IGDBClient()
@@ -55,59 +56,112 @@ class GameMetadataHandler:
         if not self.steam_api_key:
             logger.warning('⚠️  Steam API key not found (will skip Steam)')
     
-    def extract_game_name(self, stream_title: str) -> str:
+    async def fetch_from_twitch(self, game_id: str = None, game_name: str = None) -> Optional[Dict[str, Any]]:
         """
-        Extract game name from stream title (FALLBACK ONLY)
-        
-        This should rarely be used - prefer getting game_name from Twitch metadata
+        Fetch game metadata from Twitch API (PRIMARY SOURCE)
         
         Args:
-            stream_title: Stream title from Twitch
+            game_id: Twitch game ID (preferred)
+            game_name: Game name (fallback if no game_id)
         
         Returns:
-            Extracted game name
+            Dictionary with game metadata or None
         """
-        logger.warning('⚠️  Using fallback game name extraction from title')
-        logger.warning('   Prefer using game_name from Twitch stream metadata')
+        if not self.twitch_handler:
+            logger.warning('⚠️  No Twitch handler available')
+            return None
         
-        # Remove common streaming phrases
-        title = stream_title.lower()
-        title = re.sub(r'\b(playing|streaming|live|first playthrough|day \d+)\b', '', title, flags=re.IGNORECASE)
-        
-        # Extract text before common separators
-        separators = [' - ', ' | ', ' : ', '!', '?']
-        for sep in separators:
-            if sep in stream_title:
-                game_name = stream_title.split(sep)[0].strip()
-                # Remove brackets if present
-                game_name = re.sub(r'[\[\]\(\)]', '', game_name).strip()
-                return game_name
-        
-        # If no separator found, take first 1-3 words (likely game name)
-        words = stream_title.split()[:3]
-        return ' '.join(words).strip()
+        try:
+            # Authenticate if needed
+            if not self.twitch_handler.twitch:
+                await self.twitch_handler.authenticate()
+            
+            game = None
+            
+            # Try by game_id first (most reliable)
+            if game_id:
+                logger.info(f'🔍 Fetching game from Twitch by ID: {game_id}')
+                from twitchAPI.helper import first
+                game_generator = self.twitch_handler.twitch.get_games(game_ids=[game_id])
+                game = await first(game_generator)
+            
+            # Fallback to search by name
+            elif game_name:
+                logger.info(f'🔍 Searching Twitch for: {game_name}')
+                from twitchAPI.helper import first
+                game_generator = self.twitch_handler.twitch.get_games(names=[game_name])
+                game = await first(game_generator)
+            
+            if not game:
+                logger.warning(f'⚠️  Game not found on Twitch')
+                return None
+            
+            # Extract metadata from Twitch
+            metadata = {
+                'game_name': game.name,
+                'source': 'twitch',
+                'twitch_game_id': game.id,
+                'description': '',  # Twitch doesn't provide descriptions
+                'tags': [],  # Will get from IGDB/RAWG if needed
+                'box_art_url': game.box_art_url if hasattr(game, 'box_art_url') else None,
+                'igdb_id': game.igdb_id if hasattr(game, 'igdb_id') else None
+            }
+            
+            logger.info(f'✅ Found game on Twitch: {metadata["game_name"]}')
+            if metadata.get('igdb_id'):
+                logger.info(f'   IGDB ID available: {metadata["igdb_id"]}')
+            
+            return metadata
+            
+        except Exception as e:
+            logger.error(f'❌ Twitch API error: {e}')
+            return None
     
-    def fetch_from_igdb(self, game_name: str) -> Optional[Dict[str, Any]]:
+    def fetch_from_igdb(self, game_name: str, igdb_id: str = None) -> Optional[Dict[str, Any]]:
         """
         Fetch game metadata from IGDB
         
         Args:
             game_name: Name of the game
+            igdb_id: Optional IGDB ID from Twitch for direct lookup
         
         Returns:
             Dictionary with game metadata or None
         """
         try:
+            if igdb_id:
+                logger.info(f'🔍 Fetching IGDB game by ID: {igdb_id}')
+                # TODO: Add direct ID lookup to IGDB client if needed
+            
             logger.info(f'🔍 Searching IGDB for: {game_name}')
             
             # Search for game
-            results = self.igdb_client.search_games(game_name, limit=1)
+            results = self.igdb_client.search_games(game_name, limit=5)
             
             if not results:
                 logger.warning(f'⚠️  No results from IGDB for: {game_name}')
                 return None
             
-            game = results[0]
+            # Find best match - prefer exact match or base game name
+            game = None
+            for result in results:
+                result_name = result.get('name', '').lower()
+                search_name = game_name.lower()
+                
+                # Exact match
+                if result_name == search_name:
+                    game = result
+                    break
+                
+                # Base game match (no colon/subtitle)
+                if ':' not in result_name and search_name in result_name:
+                    game = result
+                    break
+            
+            # If no good match, use first result
+            if not game:
+                game = results[0]
+                logger.warning(f'⚠️  Using first IGDB result: {game.get("name")}')
             
             # Extract metadata
             metadata = {
@@ -136,34 +190,6 @@ class GameMetadataHandler:
             logger.error(f'❌ IGDB error: {e}')
             return None
     
-    def fetch_from_steam(self, game_name: str) -> Optional[Dict[str, Any]]:
-        """
-        Fetch game metadata from Steam API
-        
-        Args:
-            game_name: Name of the game
-        
-        Returns:
-            Dictionary with game metadata or None
-        """
-        if not self.steam_api_key:
-            logger.info('⏭️  Steam API key not available, skipping')
-            return None
-        
-        try:
-            logger.info(f'🔍 Searching Steam for: {game_name}')
-            
-            # TODO: Implement Steam API search when key is available
-            # Steam API doesn't have a direct search endpoint
-            # Would need to use SteamSpy API or scrape Steam store
-            
-            logger.warning('⚠️  Steam integration not yet implemented')
-            return None
-            
-        except Exception as e:
-            logger.error(f'❌ Steam error: {e}')
-            return None
-    
     def fetch_from_rawg(self, game_name: str) -> Optional[Dict[str, Any]]:
         """
         Fetch game metadata from RAWG API
@@ -186,7 +212,7 @@ class GameMetadataHandler:
             params = {
                 'key': self.rawg_api_key,
                 'search': game_name,
-                'page_size': 1
+                'page_size': 5
             }
             
             response = requests.get(url, params=params, timeout=10)
@@ -198,7 +224,18 @@ class GameMetadataHandler:
                 logger.warning(f'⚠️  No results from RAWG for: {game_name}')
                 return None
             
-            game = data['results'][0]
+            # Find best match
+            game = None
+            for result in data['results']:
+                result_name = result.get('name', '').lower()
+                search_name = game_name.lower()
+                
+                if result_name == search_name:
+                    game = result
+                    break
+            
+            if not game:
+                game = data['results'][0]
             
             # Extract metadata
             metadata = {
@@ -227,12 +264,17 @@ class GameMetadataHandler:
             logger.error(f'❌ RAWG error: {e}')
             return None
     
-    def fetch_game_metadata(self, game_name: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    async def fetch_game_metadata(
+        self, 
+        game_name: str, 
+        game_id: str = None
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
         """
-        Fetch game metadata from all available sources (IGDB → Steam → RAWG)
+        Fetch game metadata from all available sources (Twitch → IGDB → RAWG)
         
         Args:
             game_name: Name of the game
+            game_id: Optional Twitch game ID
         
         Returns:
             Tuple of (metadata dict or None, status string)
@@ -249,11 +291,48 @@ class GameMetadataHandler:
         
         logger.info(f'🎮 Fetching metadata for: {game_name}')
         
-        # Try IGDB first
+        # Try Twitch first (MOST RELIABLE)
+        if self.twitch_handler:
+            twitch_metadata = await self.fetch_from_twitch(game_id=game_id, game_name=game_name)
+            if twitch_metadata:
+                # Get additional details from IGDB if we have IGDB ID
+                igdb_id = twitch_metadata.get('igdb_id')
+                igdb_metadata = self.fetch_from_igdb(
+                    twitch_metadata['game_name'], 
+                    igdb_id=igdb_id
+                )
+                
+                # Merge Twitch + IGDB data
+                if igdb_metadata:
+                    # Use Twitch name (most accurate), but add IGDB details
+                    final_metadata = {
+                        'game_name': twitch_metadata['game_name'],  # Twitch name is canonical
+                        'source': 'twitch+igdb',
+                        'twitch_game_id': twitch_metadata.get('twitch_game_id'),
+                        'description': igdb_metadata.get('description', ''),
+                        'tags': igdb_metadata.get('tags', []),
+                        'igdb_id': igdb_metadata.get('igdb_id')
+                    }
+                    
+                    logger.info(f'✅ Combined Twitch + IGDB metadata')
+                else:
+                    # Just use Twitch data
+                    final_metadata = twitch_metadata
+                    logger.info(f'✅ Using Twitch metadata only')
+                
+                # Cache and return
+                try:
+                    self.db.create_game_metadata(final_metadata)
+                    logger.info(f'💾 Cached metadata for: {game_name}')
+                except Exception as e:
+                    logger.error(f'⚠️  Failed to cache metadata: {e}')
+                
+                return final_metadata, 'success'
+        
+        # Fallback to IGDB if Twitch unavailable
         metadata = self.fetch_from_igdb(game_name)
         if metadata:
             logger.info(f'✅ Found metadata from IGDB')
-            # Cache and return
             try:
                 self.db.create_game_metadata(metadata)
                 logger.info(f'💾 Cached metadata for: {game_name}')
@@ -261,23 +340,10 @@ class GameMetadataHandler:
                 logger.error(f'⚠️  Failed to cache metadata: {e}')
             return metadata, 'success'
         
-        # Try Steam if IGDB failed
-        metadata = self.fetch_from_steam(game_name)
-        if metadata:
-            logger.info(f'✅ Found metadata from Steam')
-            # Cache and return
-            try:
-                self.db.create_game_metadata(metadata)
-                logger.info(f'💾 Cached metadata for: {game_name}')
-            except Exception as e:
-                logger.error(f'⚠️  Failed to cache metadata: {e}')
-            return metadata, 'success'
-        
-        # Try RAWG if both IGDB and Steam failed
+        # Final fallback to RAWG
         metadata = self.fetch_from_rawg(game_name)
         if metadata:
             logger.info(f'✅ Found metadata from RAWG')
-            # Cache and return
             try:
                 self.db.create_game_metadata(metadata)
                 logger.info(f'💾 Cached metadata for: {game_name}')
@@ -289,7 +355,7 @@ class GameMetadataHandler:
         logger.error(f'❌ All sources failed for: {game_name}')
         return None, 'failed'
     
-    def process_completed_downloads(self) -> Dict[str, int]:
+    async def process_completed_downloads(self) -> Dict[str, int]:
         """
         Process all completed downloads and fetch game metadata
         
@@ -298,8 +364,6 @@ class GameMetadataHandler:
         """
         logger.info('🚀 Processing completed downloads for metadata...')
         
-        # Get completed downloads that don't have metadata yet
-        # We need to query downloads with status 'completed' and no youtube_upload record
         try:
             # Get all completed downloads with their stream data
             result = self.db.client.table('vod_downloads')\
@@ -331,9 +395,9 @@ class GameMetadataHandler:
                 
                 stats['processed'] += 1
                 
-                # Get game name from Twitch metadata
-                # Priority: game_name > "Games + Demos" > extract from title
+                # Get game info from stream metadata
                 game_name = stream_record.get('game_name')
+                game_id = stream_record.get('game_id')
                 
                 if not game_name or game_name.strip() == '':
                     logger.warning(f'⚠️  No game_name in stream metadata for: {stream_record["title"]}')
@@ -342,9 +406,11 @@ class GameMetadataHandler:
                 
                 logger.info(f'🎮 Processing: {stream_record["title"]}')
                 logger.info(f'   Game: {game_name}')
+                if game_id:
+                    logger.info(f'   Game ID: {game_id}')
                 
                 # Fetch metadata
-                metadata, status = self.fetch_game_metadata(game_name)
+                metadata, status = await self.fetch_game_metadata(game_name, game_id=game_id)
                 
                 if status == 'cached':
                     stats['cached'] += 1
@@ -352,11 +418,7 @@ class GameMetadataHandler:
                     stats['success'] += 1
                 elif status == 'failed':
                     stats['failed'] += 1
-                
-                # Store metadata status in a way we can track it
-                # We'll create a minimal upload record to mark this as processed
-                # The youtube_handler will fill in the rest
-                
+            
             logger.info(f'🎉 Metadata processing complete!')
             logger.info(f'   Processed: {stats["processed"]}')
             logger.info(f'   Success: {stats["success"]}')
@@ -371,35 +433,47 @@ class GameMetadataHandler:
 
 
 # Example usage and testing
-def main():
+async def main():
     """Test the game metadata handler"""
+    import asyncio
+    from twitch_handler import TwitchHandler
+    
     print('\n' + '='*60)
-    print('Testing Game Metadata Handler')
+    print('Testing Game Metadata Handler with Twitch Priority')
     print('='*60)
     
-    handler = GameMetadataHandler()
+    # Initialize with Twitch handler
+    twitch_handler = TwitchHandler()
+    await twitch_handler.authenticate()
+    
+    handler = GameMetadataHandler(twitch_handler=twitch_handler)
     
     # Test game names
     test_games = [
-        'Warframe',
-        'Dead Space',
-        'The Legend of Zelda',
-        'Nonexistent Game 12345'  # Should fail
+        ('Warframe', '66170'),  # game_name, game_id
+        ('Dead Space', None),
+        ('The Legend of Zelda', None),
     ]
     
-    for game_name in test_games:
+    for game_name, game_id in test_games:
         print(f'\n📦 Testing: {game_name}')
-        metadata, status = handler.fetch_game_metadata(game_name)
+        if game_id:
+            print(f'   With Game ID: {game_id}')
+        
+        metadata, status = await handler.fetch_game_metadata(game_name, game_id=game_id)
         
         if metadata:
             print(f'✅ Status: {status}')
             print(f'   Name: {metadata["game_name"]}')
             print(f'   Source: {metadata["source"]}')
-            print(f'   Tags: {", ".join(metadata["tags"])}')
-            print(f'   Description: {metadata["description"][:100]}...')
+            print(f'   Tags: {", ".join(metadata.get("tags", []))}')
+            if metadata.get('description'):
+                print(f'   Description: {metadata["description"][:100]}...')
         else:
             print(f'❌ Status: {status}')
             print(f'   No metadata found')
+    
+    await twitch_handler.close()
     
     print('\n' + '='*60)
     print('Testing complete!')
@@ -407,4 +481,5 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    import asyncio
+    asyncio.run(main())
