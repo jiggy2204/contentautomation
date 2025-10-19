@@ -53,7 +53,7 @@ class AutomationOrchestrator:
         # Initialize all handlers
         self.twitch_handler = TwitchHandler(self.db)
         self.downloader = VODDownloader(self.db)
-        self.metadata_handler = GameMetadataHandler(self.db)
+        self.metadata_handler = GameMetadataHandler(self.db, twitch_handler=self.twitch_handler)
         self.youtube_handler = YouTubeHandler(self.db)
         self.youtube_uploader = YouTubeUploader(self.db)
         self.youtube_publisher = YouTubePublisher(self.db)
@@ -119,7 +119,7 @@ class AutomationOrchestrator:
             logger.error(f'❌ Step 2 Failed: {e}')
             return {'step': 'downloads', 'success': False, 'error': str(e)}
     
-    def run_metadata_fetching(self) -> Dict[str, Any]:
+    async def run_metadata_fetching(self) -> Dict[str, Any]:
         """
         Step 3: Fetch game metadata (4:00 AM)
         
@@ -133,7 +133,7 @@ class AutomationOrchestrator:
         
         try:
             # Process completed downloads for metadata
-            stats = self.metadata_handler.process_completed_downloads()
+            stats = await self.metadata_handler.process_completed_downloads()
             stats['step'] = 'metadata'
             stats['success'] = True
             stats['timestamp'] = datetime.now().isoformat()
@@ -210,7 +210,7 @@ class AutomationOrchestrator:
         logger.info('='*60)
         
         try:
-            # Process scheduled publishes
+            # Process scheduled publishes 
             stats = self.youtube_publisher.process_scheduled_publishes()
             stats['step'] = 'youtube_publish'
             stats['success'] = True
@@ -252,7 +252,7 @@ class AutomationOrchestrator:
             all_stats.append(stats)
             
             # Step 3: Fetch game metadata
-            stats = self.run_metadata_fetching()
+            stats = await self.run_metadata_fetching()
             all_stats.append(stats)
             
             # Step 4: Prepare YouTube metadata
@@ -373,7 +373,7 @@ async def main():
             elif args.step == 'download':
                 orchestrator.run_downloads()
             elif args.step == 'metadata':
-                orchestrator.run_metadata_fetching()
+                await orchestrator.run_metadata_fetching()
             elif args.step == 'prep':
                 orchestrator.run_youtube_preparation()
             elif args.step == 'upload':
