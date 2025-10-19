@@ -102,12 +102,16 @@ class TwitchHandler:
                 vod_data = {
                     'twitch_vod_id': vod.id,
                     'title': vod.title,
+                    'game_id': vod.get('game_id'),  
+                    'game_name': vod.get('game_name'),
                     'url': vod.url,
                     'duration': vod.duration,
                     'created_at': vod_created.isoformat() if vod_created else None,
                     'view_count': vod.view_count,
                     'thumbnail_url': vod.thumbnail_url,
-                    'description': vod.description or ''
+                    'description': vod.description or '',
+                    'game_id': getattr(vod, 'game_id', None),  
+                    'game_name': getattr(vod, 'game_name', None)
                 }
                 
                 vods.append(vod_data)
@@ -151,7 +155,9 @@ class TwitchHandler:
                 'view_count': vod.view_count,
                 'thumbnail_url': vod.thumbnail_url,
                 'description': vod.description or '',
-                'language': vod.language
+                'language': vod.language,
+                'game_id': getattr(vod, 'game_id', None),  
+                'game_name': getattr(vod, 'game_name', None) 
             }
             
             return vod_data
