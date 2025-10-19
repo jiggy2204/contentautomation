@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 class GameMetadataHandler:
     """Handles fetching and caching game metadata from multiple sources"""
     
-    def __init__(self, db_client: Optional[SupabaseClient] = None, twitch_handler: Optional[TwitchHandler] = None):
+    def __init__(self, db_client: Optional[SupabaseClient] = None, twitch_handler: Optional['TwitchHandler'] = None):
         """
         Initialize Game Metadata Handler
         
