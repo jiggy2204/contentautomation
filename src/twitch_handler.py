@@ -167,6 +167,35 @@ class TwitchHandler:
             traceback.print_exc()
             return None
     
+    async def get_game_name_from_id(self, game_id: str) -> Optional[str]:
+        """
+        Get exact game name from Twitch using game_id
+        Uses: https://dev.twitch.tv/docs/api/reference#get-games
+        
+        Args:
+            game_id: Twitch game ID
+        
+        Returns:
+            Game name or None if not found
+        """
+        if not self.twitch:
+            await self.authenticate()
+        
+        try:
+            game_generator = self.twitch.get_games(game_ids=[game_id])
+            game = await first(game_generator)
+            
+            if game:
+                logger.info(f'🎮 Found game: {game.name} (ID: {game_id})')
+                return game.name
+            else:
+                logger.warning(f'⚠️  Game ID {game_id} not found')
+                return None
+                
+        except Exception as e:
+            logger.error(f'❌ Error getting game name for ID {game_id}: {e}')
+            return None
+        
     def parse_duration(self, duration) -> int:
         """
         Parse Twitch duration to seconds
@@ -253,12 +282,23 @@ class TwitchHandler:
                 vod_created = datetime.fromisoformat(vod['created_at'])
                 stream_started = vod_created  # VOD creation time is roughly when stream started
                 stream_ended = vod_created  # For VODs, this is close enough
+
+                # Get game_id and game_name from VOD
+                game_id = vod.get('game_id')
+                game_name = vod.get('game_name')
+
+                # If we have game_id but no game_name, look it up
+                if game_id and not game_name:
+                    game_name = await self.get_game_name_from_id(game_id)
+                    logger.info(f'🎮 Looked up game name: {game_name}')
                 
                 stream_data = {
                     'twitch_stream_id': f"vod_{vod['twitch_vod_id']}",  # Prefix to distinguish from live stream IDs
                     'twitch_vod_id': vod['twitch_vod_id'],
                     'user_login': self.user_login,
                     'title': vod['title'],
+                    'game_id': game_id,
+                    'game_name': game_name,
                     'started_at': stream_started.isoformat(),
                     'ended_at': stream_ended.isoformat(),
                     'duration_seconds': duration_seconds,
