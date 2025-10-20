@@ -145,7 +145,7 @@ class AutomationOrchestrator:
             logger.error(f'❌ Step 3 Failed: {e}')
             return {'step': 'metadata', 'success': False, 'error': str(e)}
     
-    def run_youtube_preparation(self) -> Dict[str, Any]:
+    async def run_youtube_preparation(self) -> Dict[str, Any]:
         """
         Step 4: Prepare YouTube metadata (4:15 AM)
         
@@ -159,7 +159,7 @@ class AutomationOrchestrator:
         
         try:
             # Process completed downloads
-            stats = self.youtube_handler.process_completed_downloads()
+            stats = await self.youtube_handler.process_completed_downloads()
             stats['step'] = 'youtube_prep'
             stats['success'] = True
             stats['timestamp'] = datetime.now().isoformat()
@@ -256,7 +256,7 @@ class AutomationOrchestrator:
             all_stats.append(stats)
             
             # Step 4: Prepare YouTube metadata
-            stats = self.run_youtube_preparation()
+            stats = await self.run_youtube_preparation()
             all_stats.append(stats)
             
             # Step 5: Upload to YouTube
@@ -375,7 +375,7 @@ async def main():
             elif args.step == 'metadata':
                 await orchestrator.run_metadata_fetching()
             elif args.step == 'prep':
-                orchestrator.run_youtube_preparation()
+                await orchestrator.run_youtube_preparation()
             elif args.step == 'upload':
                 orchestrator.run_youtube_upload()
             elif args.step == 'publish':

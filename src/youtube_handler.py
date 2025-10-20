@@ -221,7 +221,7 @@ class YouTubeHandler:
         
         return publish_time
     
-    def process_completed_downloads(self) -> Dict[str, int]:
+    async def process_completed_downloads(self) -> Dict[str, int]:
         """
         Process all completed downloads and create YouTube upload records
         
@@ -271,7 +271,7 @@ class YouTubeHandler:
                     logger.info(f'   Game: {game_name}')
                     
                     # Fetch game metadata
-                    game_metadata, metadata_status = self.metadata_handler.fetch_game_metadata(game_name)
+                    game_metadata, metadata_status = await self.metadata_handler.fetch_game_metadata(game_name)
                     
                     # Parse stream info
                     stream_started = datetime.fromisoformat(stream_record['started_at'])
