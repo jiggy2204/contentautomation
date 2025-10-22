@@ -24,3 +24,4 @@ boto3>=1.40.54 # AWS SDK for Python (works with DO Spaces)
 pyyaml>=6.0.3 # YAML parser and emitter for Python
 schedule>=1.2.2 # Job scheduling for Humans
 python-dateutil>=2.9.0 # Extensions to the standard Python datetime module
+httpx>=0.28.1 # A next generation HTTP client for Python
