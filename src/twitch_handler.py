@@ -68,7 +68,7 @@ class TwitchHandler:
     
     async def get_recent_vods(self, hours_back: int = 24) -> List[Dict[str, Any]]:
         """
-        Get all VODs from the last X hours
+        Get all VODs from the last X hours with complete game metadata
         
         Args:
             hours_back: How many hours back to check (default 24)
@@ -80,44 +80,57 @@ class TwitchHandler:
             await self.authenticate()
         
         try:
+            import httpx
             from datetime import timezone
+            
             cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
             vods = []
             
             logger.info(f'🔍 Fetching VODs from last {hours_back} hours...')
             
-            # Get recent VODs (Twitch returns newest first)
-            vod_generator = self.twitch.get_videos(
-                user_id=self.user_id, 
-                video_type=VideoType.ARCHIVE,
-                first=20  # Get up to 20 recent VODs
-            )
+            # Make direct API call to get complete VOD data including game_id
+            headers = {
+                'Client-ID': self.client_id,
+                'Authorization': f'Bearer {self.twitch._Twitch__app_auth_token}'
+            }
             
-            async for vod in vod_generator:
-                # Check if VOD is within our time window
-                vod_created = vod.created_at
+            async with httpx.AsyncClient() as client:
+                url = f'https://api.twitch.tv/helix/videos?user_id={self.user_id}&first=20&type=archive'
+                response = await client.get(url, headers=headers)
+                response.raise_for_status()
+                data = response.json()
                 
-                if vod_created and vod_created < cutoff_time:
-                    # This VOD is too old, stop checking
-                    break
-                
-                vod_data = {
-                    'twitch_vod_id': vod.id,
-                    'title': vod.title,
-                    'game_id': getattr(vod, 'game_id', None),
-                    'game_name': getattr(vod, 'game_name', None),
-                    'url': vod.url,
-                    'duration': vod.duration,
-                    'created_at': vod_created.isoformat() if vod_created else None,
-                    'view_count': vod.view_count,
-                    'thumbnail_url': vod.thumbnail_url,
-                    'description': vod.description or '',
-                    'game_id': getattr(vod, 'game_id', None),  
-                    'game_name': getattr(vod, 'game_name', None)
-                }
-                
-                vods.append(vod_data)
-                logger.info(f'📹 Found VOD: {vod.id} - {vod.title}')
+                for vod_raw in data.get('data', []):
+                    # Parse created_at
+                    vod_created_str = vod_raw.get('created_at')
+                    if vod_created_str:
+                        vod_created = datetime.fromisoformat(vod_created_str.replace('Z', '+00:00'))
+                    else:
+                        continue
+                    
+                    # Check if VOD is within our time window
+                    if vod_created < cutoff_time:
+                        break
+                    
+                    # Extract game info from API response
+                    game_id = vod_raw.get('game_id') or None
+                    game_name = vod_raw.get('game_name') or None
+                    
+                    vod_data = {
+                        'twitch_vod_id': vod_raw.get('id'),
+                        'title': vod_raw.get('title'),
+                        'url': vod_raw.get('url'),
+                        'duration': vod_raw.get('duration'),
+                        'created_at': vod_created.isoformat(),
+                        'view_count': vod_raw.get('view_count'),
+                        'thumbnail_url': vod_raw.get('thumbnail_url'),
+                        'description': vod_raw.get('description', ''),
+                        'game_id': game_id,
+                        'game_name': game_name
+                    }
+                    
+                    vods.append(vod_data)
+                    logger.info(f'📹 Found VOD: {vod_raw.get("id")} - {vod_raw.get("title")} (Game: {game_name or "Not Set"})')
             
             logger.info(f'✅ Found {len(vods)} VODs from last {hours_back} hours')
             return vods
@@ -141,7 +154,8 @@ class TwitchHandler:
             await self.authenticate()
         
         try:
-            vod_generator = self.twitch.get_videos(video_id=[vod_id])
+            # Use the correct parameter name for TwitchAPI
+            vod_generator = self.twitch.get_videos(video_ids=[vod_id])
             vod = await first(vod_generator)
             
             if not vod:
