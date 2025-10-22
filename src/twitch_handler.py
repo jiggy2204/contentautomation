@@ -88,10 +88,34 @@ class TwitchHandler:
             
             logger.info(f'🔍 Fetching VODs from last {hours_back} hours...')
             
+            # Get the app access token - try different attribute names for different library versions
+            token = None
+            for attr in ['_Twitch__app_auth_token', '_app_auth_token', 'app_auth_token', '_user_auth_token']:
+                if hasattr(self.twitch, attr):
+                    token = getattr(self.twitch, attr)
+                    if token:
+                        break
+            
+            # If we still don't have a token, get a new one
+            if not token:
+                # The authenticate method already got us a token, but we need to access it
+                # Let's get a fresh app access token
+                async with httpx.AsyncClient() as temp_client:
+                    auth_response = await temp_client.post(
+                        'https://id.twitch.tv/oauth2/token',
+                        params={
+                            'client_id': self.client_id,
+                            'client_secret': self.client_secret,
+                            'grant_type': 'client_credentials'
+                        }
+                    )
+                    auth_response.raise_for_status()
+                    token = auth_response.json()['access_token']
+            
             # Make direct API call to get complete VOD data including game_id
             headers = {
                 'Client-ID': self.client_id,
-                'Authorization': f'Bearer {self.twitch._Twitch__app_auth_token}'
+                'Authorization': f'Bearer {token}'
             }
             
             async with httpx.AsyncClient() as client:
