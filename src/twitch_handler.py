@@ -3,6 +3,8 @@
 Twitch Handler Module
 Daily VOD collection system - runs once per day between 3-7 AM
 to collect VODs from previous day's streams.
+
+Updated to check last 7 days for unprocessed VODs and process them in chronological order.
 """
 
 import traceback
@@ -245,43 +247,60 @@ class TwitchHandler:
         logger.warning(f'⚠️  Unknown duration type: {type(duration)}')
         return 0
     
-    async def process_new_vods(self) -> List[Dict[str, Any]]:
+    async def process_new_vods(self, days_back: int = 7) -> List[Dict[str, Any]]:
         """
         Main daily processing function:
-        1. Get VODs from last 24 hours
+        1. Get VODs from last X days (default 7)
         2. Check which are new (not in database)
-        3. Create stream and download records for new VODs
+        3. Process oldest unprocessed VODs first (FIFO)
+        
+        Args:
+            days_back: How many days back to check for unprocessed VODs (default 7)
         
         Returns:
             List of newly processed VODs
         """
         logger.info('🚀 Starting daily VOD processing...')
         
-        # Get recent VODs from Twitch
-        vods = await self.get_recent_vods(hours_back=24)
+        # Get recent VODs from Twitch (check last 7 days to catch any missed streams)
+        hours_to_check = days_back * 24
+        vods = await self.get_recent_vods(hours_back=hours_to_check)
         
         if not vods:
-            logger.info('💤 No VODs found in last 24 hours')
+            logger.info(f'💤 No VODs found in last {days_back} days')
             return []
+        
+        # Filter for unprocessed VODs
+        unprocessed_vods = []
+        for vod in vods:
+            existing_stream = self.db.get_stream_by_twitch_id(vod['twitch_vod_id'])
+            if not existing_stream:
+                unprocessed_vods.append(vod)
+            else:
+                logger.info(f'⏭️  VOD already processed: {vod["twitch_vod_id"]} - {vod["title"]}')
+        
+        if not unprocessed_vods:
+            logger.info('✅ All VODs already processed')
+            return []
+        
+        # Sort by created_at (oldest first) to process in chronological order
+        unprocessed_vods.sort(key=lambda v: v['created_at'])
+        
+        logger.info(f'📋 Found {len(unprocessed_vods)} unprocessed VODs (processing oldest first):')
+        for i, vod in enumerate(unprocessed_vods, 1):
+            logger.info(f'   {i}. {vod["title"]} (ID: {vod["twitch_vod_id"]}, Created: {vod["created_at"]})')
         
         new_vods = []
         
-        for vod in vods:
+        for vod in unprocessed_vods:
             try:
-                # Check if we already have this VOD
-                existing_stream = self.db.get_stream_by_twitch_id(vod['twitch_vod_id'])
-                
-                if existing_stream:
-                    logger.info(f'⏭️  VOD already processed: {vod["twitch_vod_id"]}')
-                    continue
-                
                 # Create new stream record
                 duration_seconds = self.parse_duration(vod['duration'])
                 
                 # Calculate stream start time from VOD created time and duration
                 vod_created = datetime.fromisoformat(vod['created_at'])
-                stream_started = vod_created  # VOD creation time is roughly when stream started
-                stream_ended = vod_created  # For VODs, this is close enough
+                stream_started = vod_created
+                stream_ended = vod_created
 
                 # Get game_id and game_name from VOD
                 game_id = vod.get('game_id')
@@ -293,7 +312,7 @@ class TwitchHandler:
                     logger.info(f'🎮 Looked up game name: {game_name}')
                 
                 stream_data = {
-                    'twitch_stream_id': f"vod_{vod['twitch_vod_id']}",  # Prefix to distinguish from live stream IDs
+                    'twitch_stream_id': f"vod_{vod['twitch_vod_id']}",
                     'twitch_vod_id': vod['twitch_vod_id'],
                     'user_login': self.user_login,
                     'title': vod['title'],
@@ -319,11 +338,14 @@ class TwitchHandler:
                     'vod': vod
                 })
                 
+                logger.info(f'🎉 Successfully processed VOD: {vod["title"]} ({vod["twitch_vod_id"]})')
+                
             except Exception as e:
                 logger.error(f'❌ Error processing VOD {vod.get("twitch_vod_id")}: {e}')
+                traceback.print_exc()
                 continue
         
-        logger.info(f'🎉 Processed {len(new_vods)} new VODs')
+        logger.info(f'🎉 Successfully processed {len(new_vods)} new VODs out of {len(unprocessed_vods)} found')
         return new_vods
     
     async def close(self):
@@ -350,9 +372,9 @@ async def main():
         await handler.authenticate()
         print(f'✅ Authenticated as {handler.user_login} (ID: {handler.user_id})')
         
-        # Test 2: Get recent VODs
-        print('\n2. Fetching VODs from last 24 hours...')
-        vods = await handler.get_recent_vods(hours_back=24)
+        # Test 2: Get recent VODs (check last 7 days)
+        print('\n2. Fetching VODs from last 7 days...')
+        vods = await handler.get_recent_vods(hours_back=168)  # 7 days
         print(f'✅ Found {len(vods)} VODs')
         
         if vods:
