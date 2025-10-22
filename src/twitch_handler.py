@@ -104,8 +104,8 @@ class TwitchHandler:
                 vod_data = {
                     'twitch_vod_id': vod.id,
                     'title': vod.title,
-                    'game_id': vod.get('game_id'),  
-                    'game_name': vod.get('game_name'),
+                    'game_id': getattr(vod, 'game_id', None),
+                    'game_name': getattr(vod, 'game_name', None),
                     'url': vod.url,
                     'duration': vod.duration,
                     'created_at': vod_created.isoformat() if vod_created else None,
