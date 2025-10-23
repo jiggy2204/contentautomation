@@ -36,9 +36,9 @@ class YouTubeHandler:
         self.email_notifier = EmailNotifier()
         
         # Social media links
-        self.bluesky = '@sirkrisofgames.bsky.social'
-        self.twitch = 'twitch.tv/sir_kris'
-        self.facebook = 'sirkrisofgames'
+        self.bluesky = 'https://bsky.app/profile/sirkrisofgames.bsky.social'
+        self.twitch = 'http://twitch.tv/sir_kris'
+        self.facebook = 'https://www.facebook.com/sirkrisofgames'
         
         # YouTube settings
         self.default_privacy = os.getenv('YOUTUBE_DEFAULT_PRIVACY', 'private')
