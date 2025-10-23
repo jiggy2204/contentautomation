@@ -207,7 +207,67 @@ class TwitchHandler:
             traceback.print_exc()
             return None
     
-    async def get_game_name_from_id(self, game_id: str) -> Optional[str]:
+    async def get_channel_game_info(self) -> tuple[Optional[str], Optional[str]]:
+        """
+        Get current channel game information
+        
+        Returns:
+            Tuple of (game_id, game_name) or (None, None) if not found
+        """
+        if not self.twitch or not self.user_id:
+            await self.authenticate()
+        
+        try:
+            import httpx
+            
+            # Get OAuth token
+            token = None
+            for attr in ['_Twitch__app_auth_token', '_app_auth_token', 'app_auth_token', '_user_auth_token']:
+                if hasattr(self.twitch, attr):
+                    token = getattr(self.twitch, attr)
+                    if token:
+                        break
+            
+            if not token:
+                async with httpx.AsyncClient() as temp_client:
+                    auth_response = await temp_client.post(
+                        'https://id.twitch.tv/oauth2/token',
+                        params={
+                            'client_id': self.client_id,
+                            'client_secret': self.client_secret,
+                            'grant_type': 'client_credentials'
+                        }
+                    )
+                    auth_response.raise_for_status()
+                    token = auth_response.json()['access_token']
+            
+            headers = {
+                'Client-ID': self.client_id,
+                'Authorization': f'Bearer {token}'
+            }
+            
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    f'https://api.twitch.tv/helix/channels?broadcaster_id={self.user_id}',
+                    headers=headers
+                )
+                response.raise_for_status()
+                data = response.json()
+                
+                if data.get('data') and len(data['data']) > 0:
+                    channel_info = data['data'][0]
+                    game_id = channel_info.get('game_id')
+                    game_name = channel_info.get('game_name')
+                    
+                    if game_id and game_name:
+                        logger.info(f'🎮 Channel game: {game_name} (ID: {game_id})')
+                        return game_id, game_name
+            
+            return None, None
+            
+        except Exception as e:
+            logger.error(f'❌ Error getting channel game info: {e}')
+            return None, None
         """
         Get exact game name from Twitch using game_id
         Uses: https://dev.twitch.tv/docs/api/reference#get-games
@@ -344,10 +404,16 @@ class TwitchHandler:
                 game_id = vod.get('game_id')
                 game_name = vod.get('game_name')
 
-                # If we have game_id but no game_name, look it up
-                if game_id and not game_name:
-                    game_name = await self.get_game_name_from_id(game_id)
-                    logger.info(f'🎮 Looked up game name: {game_name}')
+                # If VOD doesn't have game info, try to get from current channel settings
+                if not game_id or not game_name:
+                    logger.info(f'🔍 VOD missing game info, fetching from channel...')
+                    channel_game_id, channel_game_name = await self.get_channel_game_info()
+                    if channel_game_id and channel_game_name:
+                        game_id = channel_game_id
+                        game_name = channel_game_name
+                        logger.info(f'✅ Using channel game: {game_name}')
+                    else:
+                        logger.warning(f'⚠️  Could not determine game for VOD {vod["twitch_vod_id"]}')
                 
                 stream_data = {
                     'twitch_stream_id': f"vod_{vod['twitch_vod_id']}",
