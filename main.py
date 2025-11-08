@@ -16,12 +16,12 @@ from pathlib import Path
 
 # Import all modules
 from src.supabase_client import SupabaseClient
-from twitch_handler import TwitchHandler
-from downloader import VODDownloader
-from game_metadata_handler import GameMetadataHandler
-from youtube_handler import YouTubeHandler
-from youtube_uploader import YouTubeUploader
-from youtube_publisher import YouTubePublisher
+from src.twitch_handler import TwitchHandler
+from src.downloader import VODDownloader
+from src.game_metadata_handler import GameMetadataHandler
+from src.youtube_handler import YouTubeHandler
+from src.youtube_uploader import YouTubeUploader
+from src.youtube_publisher import YouTubePublisher
 from api_clients.token_scheduler import TokenScheduler
 
 load_dotenv()
