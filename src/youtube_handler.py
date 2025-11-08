@@ -11,7 +11,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
-from supabase_client import SupabaseClient
+from src.supabase_client import SupabaseClient
 from game_metadata_handler import GameMetadataHandler
 from email_notifier import EmailNotifier
 

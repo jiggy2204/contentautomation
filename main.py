@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 from pathlib import Path
 
 # Import all modules
-from supabase_client import SupabaseClient
+from src.supabase_client import SupabaseClient
 from twitch_handler import TwitchHandler
 from downloader import VODDownloader
 from game_metadata_handler import GameMetadataHandler

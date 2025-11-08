@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from supabase_client import SupabaseClient
+from src.supabase_client import SupabaseClient
 from api_clients.igdb_client import IGDBClient
 
 load_dotenv()

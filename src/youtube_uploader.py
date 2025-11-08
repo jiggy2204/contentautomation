@@ -20,7 +20,7 @@ import boto3
 from botocore.exceptions import ClientError
 from dotenv import load_dotenv
 
-from supabase_client import SupabaseClient
+from src.supabase_client import SupabaseClient
 from email_notifier import EmailNotifier
 
 load_dotenv()

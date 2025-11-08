@@ -17,7 +17,7 @@ from twitchAPI.helper import first
 from dotenv import load_dotenv
 
 from twitchAPI.type import VideoType
-from supabase_client import SupabaseClient
+from src.supabase_client import SupabaseClient
 
 load_dotenv()
 

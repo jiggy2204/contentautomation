@@ -16,7 +16,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from dotenv import load_dotenv
 
-from supabase_client import SupabaseClient
+from src.supabase_client import SupabaseClient
 
 load_dotenv()
 
