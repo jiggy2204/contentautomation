@@ -34,37 +34,52 @@ Automated pipeline that:
 ## 🏗️ Architecture
 
 ```
-Twitch Stream Ends
+Cron Job: morning.sh (runs daily, e.g., 9am)
     ↓
-Webhook Triggers
+Check Twitch for VODs from previous day
     ↓
-Celery Task: Download VOD
+Download VOD with Streamlink
     ↓
-Query Game Databases (IGDB/RAWG)
+Query Game Databases (IGDB/RAWG) for metadata
     ↓
-Generate Description + Tags
+Store metadata for later use
+
+Cron Job: evening.sh (runs daily, e.g., 6pm)
     ↓
-Celery Task: Upload to YouTube
+Generate YouTube description from stored metadata
     ↓
-Cleanup Downloaded Files
+Upload to YouTube at optimal posting time
+    ↓
+Delete downloaded VOD files
+    ↓
+Clean up temporary storage
+
 ```
 
 ### Tech Stack
 
+**Task Scheduling:**
+- Cron (Linux built-in task scheduler)
+- Bash shell scripts (morning.sh, evening.sh, cleanup.sh)
+
 **Backend:**
-- Python 3.x
-- Django (REST API + Admin)
-- Celery + Redis (async task processing)
+- Python 3.x (VOD processing scripts)
+- Supabase (PostgreSQL database)
 
 **APIs:**
-- Twitch API (OAuth2 + Webhooks)
+- Twitch API (OAuth2 + VOD retrieval)
 - YouTube Data API v3
 - IGDB (game metadata)
 - RAWG (game database)
 
+**Tools:**
+- Streamlink (VOD downloading)
+- yt-dlp (backup downloader)
+
 **Infrastructure:**
-- DigitalOcean (hosting)
+- DigitalOcean Droplet (hosting)
 - DigitalOcean Spaces (temporary storage)
+- Supabase (PostgreSQL database)
 
 ---
 
@@ -76,7 +91,7 @@ Cleanup Downloaded Files
 
 ### 2. Large File Processing
 **Problem:** VODs can be 10-22GB, processing takes 30min-2hrs  
-**Solution:** Celery workers handle async processing, allowing concurrent uploads without blocking
+**Solution:** Sequential processing with progress tracking. For single-user MVP, this is acceptable - only one stream to process at a time.
 
 ### 3. API Rate Limiting
 **Problem:** YouTube API has strict quota limits (10,000 units/day)  
@@ -143,26 +158,76 @@ Cleanup Downloaded Files
 - No failed uploads
 - System self-recovers from transient errors
 
-**Key Insight:** The difference between "works on my laptop" and "works in production" is 90% error handling and edge case management.
+**Key Insight:** The difference between "works on my laptop" and "works in production" is 90% error handling and edge case management. Also: **Use the simplest tool that solves the problem** - saved weeks by using `schedule` instead of setting up Celery + Redis infrastructure.
 
 ---
 
 ## 💡 Why This Architecture?
 
+### Cron + Shell Scripts (Not Celery, Not Python schedule)
+- **Pro:** Built into Linux, zero infrastructure setup
+- **Pro:** Dead simple to debug (just look at cron logs)
+- **Pro:** Separate processes = easier to fix individual pieces
+- **Pro:** Can run tasks at different times (morning download, evening upload)
+- **Con:** Not suitable for multi-user systems with complex workflows
+- **Decision:** For single-user MVP, use the simplest possible solution - cron is built-in and bulletproof
+
+**Why three separate scripts?**
+1. **morning.sh** - Downloads VODs from previous day + gets metadata (runs at 9am)
+2. **evening.sh** - Generates description + uploads to YouTube (runs at 6pm, optimal posting time)
+3. **cleanup.sh** - Deletes downloaded files after successful upload (saves storage costs)
+
+**Why separate morning/evening jobs?**
+- YouTube algorithm favors posts at specific times (6pm is optimal for viewership)
+- Separating download from upload means if download fails, don't try to upload
+- Easier to debug - if something breaks, you know which step failed
+
+**Why NOT Celery/Redis for MVP?**
+- Would need to install, configure, and monitor Redis
+- Would need to set up Celery workers and beat scheduler
+- Adds complexity for zero benefit when processing one stream
+- Cron has been doing this job since 1975 - it's battle-tested
+
+**Why NOT Python `schedule` library?**
+- Requires keeping a Python process running 24/7
+- If process crashes, tasks don't run until you restart it
+- Cron is built into the OS - if server reboots, cron auto-starts
+
+**When to upgrade to Celery?** (EOSVA multi-user version)
+- Multiple users = need task queuing and priority management
+- Need retry logic for failed uploads
+- Need to scale horizontally (multiple worker machines)
+- Worth the infrastructure complexity at that point
+
 ### Django
-- **Pro:** Excellent ORM, built-in admin panel, robust ecosystem
-- **Con:** Not the fastest for webhooks (but good enough for this use case)
-- **Decision:** Use Django for database, task management, and admin interface
+- **Pro:** Excellent ORM, built-in admin panel for managing data
+- **Con:** Not needed for the shell scripts, but useful for database operations
+- **Decision:** Use Django for database models and admin interface
 
-### Celery + Redis
-- **Pro:** Reliable async task processing, built-in retry logic
-- **Con:** Requires Redis infrastructure
-- **Decision:** Video processing is too slow for synchronous handling, Celery is battle-tested
+### Streamlink for VOD Download
+- **Pro:** Reliable, handles Twitch authentication automatically
+- **Con:** Can be slower than direct download
+- **Decision:** Reliability > speed for automated system
 
-### Webhook-Based (vs Polling)
-- **Pro:** Instant detection when stream ends
-- **Con:** More complex (need to handle retries, ordering)
-- **Decision:** Webhooks are more responsive and scale better than polling
+---
+
+## 🎓 Architecture Philosophy
+
+**This project demonstrates:**
+
+1. **Use Built-In Tools** - Cron is already on every Linux server, why install more?
+2. **Separate Concerns** - Three scripts for three jobs (download, upload, cleanup)
+3. **Prove Concept** - Validated automation works before adding complexity
+4. **Scale When Needed** - Planning Celery + Redis for multi-user (EOSVA)
+
+**Not:**
+- Over-engineering from day one
+- Installing infrastructure before you need it
+- Using fancy tools when simple tools work
+
+**Result:** Working system in production with zero infrastructure overhead, clear path to scale.
+
+**The Unix Philosophy:** Write programs that do one thing and do it well. Three shell scripts, three responsibilities.
 
 ---
 
@@ -188,8 +253,9 @@ This MVP proved the concept works. Key learnings:
 ### Next Steps
 Building **[EOSVA](https://github.com/jiggy2204/eosva)** - the multi-user, multi-platform version with:
 - Multi-tenant architecture (serve 50+ users)
+- **Celery + Redis for proper task queuing** (upgrading from simple `schedule`)
 - Cross-platform support (YouTube, TikTok, Instagram, Bluesky, Facebook)
-- React dashboard for monitoring
+- Django templates for user dashboard
 - Automatic clip generation
 - Scheduled posting per platform
 - User-configurable templates
@@ -202,8 +268,8 @@ Building **[EOSVA](https://github.com/jiggy2204/eosva)** - the multi-user, multi
 
 ### Prerequisites
 - Python 3.8+
-- Redis
-- DigitalOcean account (or alternative hosting)
+- Linux server with cron (DigitalOcean Droplet or similar)
+- Supabase account (for database)
 - API keys: Twitch, YouTube, IGDB, RAWG
 
 ### Environment Variables
@@ -223,10 +289,12 @@ IGDB_CLIENT_SECRET=your_igdb_secret
 RAWG_API_KEY=your_rawg_key
 
 # Infrastructure
-DATABASE_URL=your_db_url
-REDIS_URL=your_redis_url
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_supabase_key
 DO_SPACES_KEY=your_spaces_key
 DO_SPACES_SECRET=your_spaces_secret
+DO_SPACES_BUCKET=your_bucket_name
+DO_SPACES_REGION=nyc3
 ```
 
 ### Installation
@@ -242,18 +310,38 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 # Install dependencies
 pip install -r requirements.txt
 
-# Run migrations
-python manage.py migrate
+# Set up environment variables (create .env file)
+# See Environment Variables section above
 
-# Start Celery worker
-celery -A contentautomation worker -l info
+# Set up cron jobs
+crontab -e
 
-# Start Celery beat (scheduler)
-celery -A contentautomation beat -l info
+# Add these lines (adjust times as needed):
+# Download VODs overnight at 3am
+0 3 * * * /path/to/contentautomation/morning.sh
 
-# Start Django server
-python manage.py runserver
+# Upload to YouTube every evening at 6pm
+0 18 * * * /path/to/contentautomation/evening.sh
+
+# Run token check on IGDB for refresh
+0 19 * * * /path/to/contentautomation/run_token_check.sh
 ```
+
+**Cron Job Explanation:**
+- `0 3 * * *` = Run at 3:00 AM every day
+- `0 18 * * *` = Run at 6:00 PM every day
+- `0 19 * * *` = Run at 7:00 PM every day
+
+**What each script does:**
+- **morning.sh** - Checks Twitch for yesterday's VODs, downloads them, fetches game metadata
+- **evening.sh** - Generates YouTube description from metadata, uploads video at optimal time
+- **run_token_check.sh** - Checks IGDB token to fetch game description and hashtags
+
+**Note:** 
+- Cron runs automatically in the background
+- No need to keep any process running manually
+- Logs are in `/var/log/syslog` (or wherever your cron logs go)
+- To test: `bash morning.sh` manually before setting up cron
 
 ---
 
@@ -319,10 +407,14 @@ Learning Platform Engineer | Full-Stack Developer
 Building this taught me that:
 - **Shipping > Planning** - I learned more in 1 month of production than 6 months of planning would teach
 - **Error handling is 90% of production code** - The happy path is easy, edge cases are hard
-- **Start small, prove it works** - This single-user MVP validated the concept before I invested in the full multi-user system
+- **Use what's already there** - Cron has been solving this problem since 1975. Why reinvent it?
+- **Separate concerns** - Three scripts = three responsibilities = easier debugging
+- **Don't over-engineer** - Single-user system doesn't need Redis, Celery, or message queues
+
+Cron + shell scripts were a first for me, but I wanted to go with old reliable. It works and it's been running stable for over a month.
 
 If you're building something similar, feel free to reach out. Happy to share lessons learned.
 
 ---
 
-**Built with ☕ and spousal support!**
+**Built with caffeine and spousal support**
