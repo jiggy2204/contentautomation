@@ -140,7 +140,7 @@ Clean up temporary storage
 
 ## 🚀 The Journey (Lessons Learned)
 
-### Initial Deployment (October 2024)
+### Initial Deployment (October 2025)
 - Deployed MVP, immediately hit production issues
 - Webhooks arriving in wrong order
 - Videos timing out during processing
@@ -152,13 +152,11 @@ Clean up temporary storage
 - Optimized video processing pipeline
 - Added monitoring for task queue health
 
-### Stable Production (November 2024 - Present)
+### Stable Production (November 2025 - Present)
 - 1+ month running with zero manual intervention
 - All VODs processed automatically
 - No failed uploads
 - System self-recovers from transient errors
-
-**Key Insight:** The difference between "works on my laptop" and "works in production" is 90% error handling and edge case management. Also: **Use the simplest tool that solves the problem** - saved weeks by using `schedule` instead of setting up Celery + Redis infrastructure.
 
 ---
 
@@ -220,45 +218,7 @@ Clean up temporary storage
 3. **Prove Concept** - Validated automation works before adding complexity
 4. **Scale When Needed** - Planning Celery + Redis for multi-user (EOSVA)
 
-**Not:**
-- Over-engineering from day one
-- Installing infrastructure before you need it
-- Using fancy tools when simple tools work
-
 **Result:** Working system in production with zero infrastructure overhead, clear path to scale.
-
-**The Unix Philosophy:** Write programs that do one thing and do it well. Three shell scripts, three responsibilities.
-
----
-
-## 📈 Metrics (Informal - No Dashboard Yet)
-
-- **Uptime:** 1+ month stable, zero downtime
-- **Success Rate:** ~100% (no failed uploads after stabilization)
-- **Processing Time:** 30min - 2hrs depending on VOD length
-- **Storage Costs:** ~$5/month (DigitalOcean Spaces)
-- **Manual Intervention:** Zero (fully automated)
-
----
-
-## 🎯 What's Next
-
-This MVP proved the concept works. Key learnings:
-
-1. ✅ **Automation is viable** - VOD → YouTube pipeline can be fully automated
-2. ✅ **Metadata matters** - Auto-generated tags/hashtags work well
-3. ✅ **Reliability is hard** - Most dev time went to error handling, not features
-4. ⚠️ **Single-user limits** - Hard-coded for one user, not scalable
-
-### Next Steps
-Building **[EOSVA](https://github.com/jiggy2204/eosva)** - the multi-user, multi-platform version with:
-- Multi-tenant architecture (serve 50+ users)
-- **Celery + Redis for proper task queuing** (upgrading from simple `schedule`)
-- Cross-platform support (YouTube, TikTok, Instagram, Bluesky, Facebook)
-- Django templates for user dashboard
-- Automatic clip generation
-- Scheduled posting per platform
-- User-configurable templates
 
 ---
 
@@ -345,23 +305,6 @@ crontab -e
 
 ---
 
-## 📝 Project Structure
-
-```
-contentautomation/
-├── src/
-│   ├── twitch_handler.py      # Twitch API + webhook handling
-│   ├── youtube_handler.py     # YouTube upload logic
-│   ├── downloader.py           # VOD download management
-│   ├── game_metadata_handler.py # IGDB/RAWG integration
-│   └── supabase_client.py      # Database operations
-├── temp/                        # Temporary VOD storage
-├── manage.py
-└── requirements.txt
-```
-
----
-
 ## 🤔 Why Open Source This?
 
 **Three reasons:**
@@ -385,12 +328,6 @@ contentautomation/
 ## 📄 License
 
 MIT License - See [LICENSE](LICENSE) file
-
----
-
-## 🔗 Related Projects
-
-- **[EOSVA](https://github.com/jiggy2204/eosva)** - Multi-user, multi-platform version (in development)
 
 ---
 
