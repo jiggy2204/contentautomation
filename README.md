@@ -2,7 +2,7 @@
 
 **Status:** ✅ Running in production (1+ month stable after initial debugging)  
 **Type:** Single-user MVP / Proof of Concept  
-**Next Version:** [EOSVA](https://github.com/jiggy2204/eosva) (multi-user, multi-platform)
+**Next Version:** Multi-user, Multi-platform
 
 ---
 
